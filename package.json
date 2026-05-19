@@ -1,0 +1,27 @@
+{
+  "name": "cursor-agentic-static-frontend-framework",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Agentic static-frontend framework for Cursor: rules, memory, handoffs, tests, CI, and a bootstrap shell.",
+  "scripts": {
+    "dev": "node scripts/dev-server.js",
+    "build": "node scripts/build-static.js",
+    "check": "node scripts/check-project.js",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:e2e": "playwright test",
+    "test:ci": "vitest run && playwright test"
+  },
+  "keywords": [
+    "frontend",
+    "static-site",
+    "cursor",
+    "agentic-framework"
+  ],
+  "license": "MIT",
+  "devDependencies": {
+    "@playwright/test": "^1.52.0",
+    "vitest": "^3.1.1"
+  }
+}
