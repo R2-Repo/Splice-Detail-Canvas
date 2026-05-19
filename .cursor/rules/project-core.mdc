@@ -1,0 +1,24 @@
+---
+description: Core project standards and agent workflow
+alwaysApply: true
+---
+
+# Splice Detail Canvas
+
+Read `AGENTS.md`, then `docs/agent/SCOPE.md`, `CONTEXT.md`, and `HANDOFF.md` before coding. Use `docs/reference/` when the user cites files there.
+
+## Stack
+
+React 19 + Vite + TypeScript + `@xyflow/react`. Frontend PWA only.
+
+## Rules
+
+- Short bullet responses; user can type **expand** for detail.
+- No new npm deps without user approval.
+- No invented APIs or backends.
+- Use `@/` imports; keep features under `src/features/`.
+- End sessions by updating CONTEXT + HANDOFF.
+
+## Quality
+
+Run `npm run check`, `npm run test:ci`, and `npm run build` before finishing substantive work.
