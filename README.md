@@ -1,74 +1,24 @@
-# Cursor agentic static frontend framework
+This project will be a modern front end only react progressive web app. The app will be built by Cursor AI Agents. This app will be based on a node workflow canvas style app. 
 
-A **complete** conventions package for **Cursor Cloud Agents** and humans: rules, onboarding, **versioned memory**, handoffs, automated tests, CI, quality and security defaults, and a minimal **bootstrap shell** in `src/` until your product UI ships. **Hosting-agnostic:** `npm run build` outputs `dist/` for any static host you attach to your repo.
 
-## What is included
+The project will need to be set up and have folders and files added by the cursor agent to optomize an agentic developement workflow by cursor agents. Cursor agents should always respond with minimal words to reduce token usage. The agent needs to maintain context and handoff files. Below is more instruction for the agent:
 
-```text
-.
-├── AGENTS.md
-├── CONTRIBUTING.md
-├── PROJECT_OVERVIEW.md
-├── TASK_HISTORY.md
-├── README.md
-├── .env.example
-├── .gitignore
-├── index.html
-├── package.json
-├── playwright.config.js
-├── vitest.config.js
-├── src/
-├── tests/              (Vitest)
-├── e2e/                (Playwright)
-├── scripts/
-├── docs/
-│   ├── README.md       (documentation index)
-│   ├── START_HERE.md
-│   ├── ONBOARDING.md
-│   ├── MEMORY.md
-│   ├── HANDOFF.md
-│   ├── TESTING.md
-│   ├── DEFINITION_OF_DONE.md
-│   ├── QUALITY.md
-│   ├── SECURITY.md
-│   ├── MCP.md
-│   ├── memory/
-│   └── …
-├── .github/
-│   ├── workflows/
-│   ├── ISSUE_TEMPLATE/
-│   └── pull_request_template.md
-├── .cursor/
-│   ├── rules/
-│   └── skills/
-```
+**[GOAL]**
+Your objective is to produce clean, maintainable, and production-ready code that solves the user's specific request. Focus on delivering a complete and functional feature, not just a proof-of-concept.
 
-**New here?** Open `docs/START_HERE.md`, then `docs/ONBOARDING.md` with your agent.
+**[CONSTRAINTS]**
+- NEVER assume or invent new endpoints or libraries without explicit permission.
+- NEVER install new dependencies without asking first.
+- ONLY modify files within the specified working directory or scope.
+- ADHERE strictly to the language-specific and project-level style guides.
+- RETAIN existing architecture and design patterns.
 
-**Agent rules:** `AGENTS.md` is the main instruction file; `.cursor/rules/agent-communication.md` points to it.
+**[FORMAT]**
+1. THINK first: Output a concise, high-level summary of your plan and steps before executing any actions.
+2. CONFIRM: Ask clarifying questions if the prompt is ambiguous or lacks crucial context.
+3. EXECUTE: Implement the code. Ensure all variable names and structures match existing conventions.
+4. TEST: Write and execute unit tests (e.g., TDD approach). Summarize test coverage and verify that no breaking changes were introduced.
 
-## Commands
-
-```bash
-npm install
-npm run dev          # http://localhost:5173
-npm run check        # required files and folders
-npm run build        # static output to dist/
-npm test             # unit tests
-npm run test:e2e     # browser tests (starts dev server)
-npm run test:ci      # unit + e2e (used in CI)
-```
-
-## Contributing
-
-See `CONTRIBUTING.md` and `docs/DEFINITION_OF_DONE.md`.
-
-## Recommended agent workflow
-
-1. Start from the latest default branch (usually `main`).
-2. One focused task per agent run.
-3. Run `npm run check`, `npm run build`, and `npm run test:ci` before finishing when behavior or tests change.
-4. Open a PR; do not merge until you review.
-5. For milestones that need human-visible proof, verify with `npm run dev` and attach a **screen recording** or clear replay steps (see `docs/TESTING.md`).
-
-**Prompts:** `docs/PROMPT_EXAMPLES.md`.
+**[FAILURE]**
+- If you encounter a bug or failing test, do NOT guess the fix. Halt execution, explain the error, and wait for further instructions.
+- Provide fixes and summaries in concise bullet points, not paragraphs.
