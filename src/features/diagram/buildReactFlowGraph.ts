@@ -1,7 +1,11 @@
 import type { Edge, Node } from "@xyflow/react";
 
+import { smfoLabelForCable } from "@/features/diagram/cableLabels";
 import { computeCanvasPlacement } from "@/features/diagram/canvasPlacement";
-import { visualCableHeight } from "@/features/diagram/cableLayoutMetrics";
+import {
+  CABLE_LAYOUT,
+  visualCableHeight,
+} from "@/features/diagram/cableLayoutMetrics";
 import { colorHex } from "@/features/diagram/colorCode";
 import {
   computeDiagramLayout,
@@ -14,6 +18,7 @@ import {
   type VisualCable,
 } from "@/features/diagram/visualCables";
 import { orderedFiberConnections } from "@/features/diagram/buildConnectionGraph";
+import { connectionRowIndexMap } from "@/features/diagram/connectionRowOrder";
 import type { ConnectionGraph, LayoutOverrides } from "@/types/splice";
 
 import type { CableNodeData } from "@/features/canvas/nodes/types";
@@ -30,14 +35,6 @@ function applyPlacementToLegs(
       leg.side = p[0]!;
     }
   }
-}
-
-function inferCountLabel(cable: string): string | undefined {
-  if (/144/i.test(cable)) return "144ct";
-  if (/288/i.test(cable)) return "288ct";
-  if (/24\s*DIST|24\s*SMF/i.test(cable)) return "24ct";
-  if (/6\s*DROP|DK-?6/i.test(cable)) return "6ct";
-  return undefined;
 }
 
 export function buildReactFlowGraph(
@@ -66,16 +63,21 @@ export function buildReactFlowGraph(
       type: "cable",
       position: pos,
       data: {
+        smfoLabel: smfoLabelForCable(vc.cable),
         label: vc.cable,
-        countLabel: inferCountLabel(vc.cable),
         side: vc.side,
         tubes: vc.tubes,
         nodeHeight: visualCableHeight(vc),
+        fiberPitch: CABLE_LAYOUT.fiberRowH,
+        spliceNumber: graph.report.header.spliceNumber,
       } satisfies CableNodeData,
       draggable: true,
-      style: { width: 200 },
+      style: { width: 220 },
     });
   }
+
+  const rowIndex = connectionRowIndexMap(graph);
+  const laneCount = orderedFiberConnections(graph).length;
 
   for (const conn of orderedFiberConnections(graph)) {
     const left = endpointOnVisualSide(conn, graph, visualCables, "left");
@@ -83,6 +85,7 @@ export function buildReactFlowGraph(
     if (!left || !right) continue;
 
     const color = colorHex(left.endpoint.fiberColor);
+    const laneIndex = rowIndex.get(conn.id) ?? 0;
     edges.push({
       id: `splice-${conn.id}`,
       source: `cable-${left.visualCableId}`,
@@ -94,6 +97,8 @@ export function buildReactFlowGraph(
         color,
         existing: overrides?.existingEdgeIds?.includes(`splice-${conn.id}`),
         circuitName: conn.pair.circuitName,
+        laneIndex,
+        laneCount,
       },
     });
   }

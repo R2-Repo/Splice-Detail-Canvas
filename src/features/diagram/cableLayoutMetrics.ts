@@ -1,59 +1,77 @@
 import type { VisualCable } from "@/features/diagram/visualCables";
 
+/**
+ * Minimum center-to-center spacing between adjacent fiber splice lines (px).
+ * Used for row layout, cable node rows, and edge routing clearance.
+ */
+export const MIN_FIBER_LINE_GAP = 40;
+
+/** Row pitch matches line gap so handles and splice paths stay evenly spaced. */
+export const FIBER_ROW_PITCH = MIN_FIBER_LINE_GAP;
+
+/** Center spacing between adjacent vertical splice legs — same as row pitch. */
+export const SPLICE_LANE_SEP = MIN_FIBER_LINE_GAP;
+
 export const CABLE_LAYOUT = {
-  width: 1200,
-  leftX: 32,
-  rightX: 880,
-  topY: 80,
-  cableGap: 28,
-  headerH: 52,
+  width: 1400,
+  leftX: 24,
+  rightX: 1000,
+  topY: 100,
+  cableGap: 32,
+  headerH: 56,
   tubeLabelH: 18,
-  fiberRowH: 24,
-  tubeGap: 6,
+  fiberRowH: FIBER_ROW_PITCH,
+  fiberStrandH: 3,
+  tubeGap: 8,
+  minFiberLineGap: MIN_FIBER_LINE_GAP,
+  spliceLaneSep: SPLICE_LANE_SEP,
 } as const;
 
-export function visualCableHeight(vc: VisualCable): number {
-  let h = CABLE_LAYOUT.headerH;
-  for (const tube of vc.tubes) {
-    h += CABLE_LAYOUT.tubeLabelH + tube.fibers.length * CABLE_LAYOUT.fiberRowH;
-    h += CABLE_LAYOUT.tubeGap;
-  }
-  return h;
+export function fiberRowY(rowIndex: number, baseTop = CABLE_LAYOUT.topY): number {
+  const rowStart = baseTop + CABLE_LAYOUT.headerH;
+  return rowStart + rowIndex * CABLE_LAYOUT.fiberRowH;
 }
 
-/** Pixel offset from node top to fiber row center (for handles). */
-export function fiberRowOffsetInTubes(
-  tubes: VisualCable["tubes"],
-  connectionId: string,
-): number {
-  return fiberRowOffsetInCable(
-    {
-      id: "",
-      legId: "",
-      device: "",
-      cable: "",
-      side: "left",
-      order: 0,
-      tubes,
-    },
-    connectionId,
-  );
-}
-
+/**
+ * Offset from cable node top to handle center.
+ * Uses global rowIndex so fiber rows stay on the correct pitch even if row indices skip.
+ */
 export function fiberRowOffsetInCable(
   vc: VisualCable,
   connectionId: string,
 ): number {
-  let y = CABLE_LAYOUT.headerH;
-  for (const tube of vc.tubes) {
-    y += CABLE_LAYOUT.tubeLabelH;
-    for (const fiber of tube.fibers) {
-      if (fiber.connectionId === connectionId) {
-        return y + CABLE_LAYOUT.fiberRowH / 2;
-      }
-      y += CABLE_LAYOUT.fiberRowH;
-    }
-    y += CABLE_LAYOUT.tubeGap;
-  }
-  return CABLE_LAYOUT.headerH;
+  const fiber = vc.tubes
+    .flatMap((t) => t.fibers)
+    .find((f) => f.connectionId === connectionId);
+  if (!fiber) return CABLE_LAYOUT.headerH;
+
+  const rowStart = CABLE_LAYOUT.headerH + CABLE_LAYOUT.tubeLabelH;
+  return rowStart + fiber.rowIndex * CABLE_LAYOUT.fiberRowH + CABLE_LAYOUT.fiberRowH / 2;
+}
+
+export function fiberRowOffsetInTubes(
+  tubes: VisualCable["tubes"],
+  connectionId: string,
+): number {
+  const fiber = tubes
+    .flatMap((t) => t.fibers)
+    .find((f) => f.connectionId === connectionId);
+  if (!fiber) return CABLE_LAYOUT.headerH;
+  const rowStart = CABLE_LAYOUT.headerH + CABLE_LAYOUT.tubeLabelH;
+  return rowStart + fiber.rowIndex * CABLE_LAYOUT.fiberRowH + CABLE_LAYOUT.fiberRowH / 2;
+}
+
+export function visualCableHeight(vc: VisualCable): number {
+  const fibers = vc.tubes.flatMap((t) => t.fibers);
+  if (fibers.length === 0) return CABLE_LAYOUT.headerH;
+
+  const maxRow = Math.max(...fibers.map((f) => f.rowIndex));
+  const rowCount = maxRow + 1;
+
+  return (
+    CABLE_LAYOUT.headerH +
+    CABLE_LAYOUT.tubeLabelH +
+    rowCount * CABLE_LAYOUT.fiberRowH +
+    CABLE_LAYOUT.tubeGap
+  );
 }

@@ -14,6 +14,7 @@ import { useCallback, useRef, useState } from "react";
 
 import { spliceEdgeTypes } from "@/features/canvas/edgeTypes";
 import {
+  existingIdsFromEdges,
   loadLayoutOverrides,
   positionsFromNodes,
   saveLayoutOverrides,
@@ -36,6 +37,20 @@ function WorkflowCanvasInner() {
   const [meta, setMeta] = useState<string | null>(null);
   const [inspectText, setInspectText] = useState<string | null>(null);
   const [showInspect, setShowInspect] = useState(false);
+  const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
+
+  const persistLayout = useCallback(
+    (nextNodes: Node[], nextEdges: Edge[]) => {
+      const key = reportKeyRef.current;
+      if (!key) return;
+      saveLayoutOverrides({
+        reportKey: key,
+        positions: positionsFromNodes(nextNodes),
+        existingEdgeIds: existingIdsFromEdges(nextEdges),
+      });
+    },
+    [],
+  );
 
   const loadFromCsv = useCallback(
     (text: string, fileName: string) => {
@@ -51,6 +66,7 @@ function WorkflowCanvasInner() {
       );
       setNodes(nextNodes);
       setEdges(nextEdges);
+      setSelectedEdgeId(null);
       const title =
         report.header.spliceNumber ?? report.header.name ?? fileName;
       setMeta(
@@ -61,16 +77,38 @@ function WorkflowCanvasInner() {
   );
 
   const onNodeDragStop = useCallback(() => {
-    const key = reportKeyRef.current;
-    if (!key) return;
     setNodes((current) => {
-      saveLayoutOverrides({
-        reportKey: key,
-        positions: positionsFromNodes(current),
+      setEdges((currentEdges) => {
+        persistLayout(current, currentEdges);
+        return currentEdges;
       });
       return current;
     });
-  }, [setNodes]);
+  }, [setNodes, setEdges, persistLayout]);
+
+  const onEdgeClick = useCallback(
+    (_: React.MouseEvent, edge: Edge) => {
+      setSelectedEdgeId(edge.id);
+      setEdges((current) => {
+        const next = current.map((e) => {
+          if (e.id !== edge.id) return e;
+          const existing = Boolean(
+            (e.data as { existing?: boolean } | undefined)?.existing,
+          );
+          return {
+            ...e,
+            data: { ...e.data, existing: !existing },
+          };
+        });
+        setNodes((nodes) => {
+          persistLayout(nodes, next);
+          return nodes;
+        });
+        return next;
+      });
+    },
+    [setEdges, setNodes, persistLayout],
+  );
 
   return (
     <div className="workflow-canvas">
@@ -85,6 +123,12 @@ function WorkflowCanvasInner() {
             {showInspect ? "Hide" : "Show"} CSV parse report
           </button>
         ) : null}
+        <span className="workflow-canvas__hint">
+          Click a splice line to toggle protect-in-place (dashed, no dot)
+        </span>
+        {selectedEdgeId ? (
+          <span className="workflow-canvas__meta">Selected: {selectedEdgeId}</span>
+        ) : null}
         {meta ? <span className="workflow-canvas__meta">{meta}</span> : null}
       </div>
       {showInspect && inspectText ? (
@@ -96,13 +140,15 @@ function WorkflowCanvasInner() {
         onNodesChange={onNodesChange}
         onNodeDragStop={onNodeDragStop}
         onEdgesChange={onEdgesChange}
+        onEdgeClick={onEdgeClick}
         nodeTypes={spliceNodeTypes}
         edgeTypes={spliceEdgeTypes}
         fitView
-        fitViewOptions={{ padding: 0.2 }}
-        minZoom={0.25}
+        fitViewOptions={{ padding: 0.25 }}
+        minZoom={0.2}
         maxZoom={2}
         nodesDraggable
+        elementsSelectable
         proOptions={{ hideAttribution: true }}
       >
         <Background gap={16} />

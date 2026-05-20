@@ -29,3 +29,9 @@ export function positionsFromNodes(
   }
   return positions;
 }
+
+export function existingIdsFromEdges(
+  edges: { id: string; data?: { existing?: boolean } }[],
+): string[] {
+  return edges.filter((e) => e.data?.existing).map((e) => e.id);
+}

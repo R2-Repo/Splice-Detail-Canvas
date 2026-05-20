@@ -7,8 +7,9 @@
 
 .workflow-canvas__toolbar {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 1rem;
+  gap: 0.75rem;
   padding: 0.5rem 0.75rem;
   border-bottom: 1px solid #334155;
   flex-shrink: 0;
@@ -17,6 +18,11 @@
 .workflow-canvas__meta {
   font-size: 0.8125rem;
   color: #94a3b8;
+}
+
+.workflow-canvas__hint {
+  font-size: 0.75rem;
+  color: #64748b;
 }
 
 .workflow-canvas .react-flow {
@@ -62,7 +68,7 @@
   white-space: pre-wrap;
 }
 
-/* --- Composite cable node (cable → tube → fiber) --- */
+/* --- Composite cable node --- */
 
 .splice-node {
   position: relative;
@@ -72,9 +78,10 @@
   display: flex;
   flex-direction: row;
   align-items: flex-start;
-  gap: 6px;
-  min-width: 180px;
-  max-width: 220px;
+  gap: 8px;
+  min-width: 200px;
+  max-width: 240px;
+  font-family: system-ui, sans-serif;
 }
 
 .cable-node--right.cable-node--composite {
@@ -84,39 +91,46 @@
 
 .cable-node__head {
   display: flex;
-  flex-direction: column;
-  align-items: center;
+  flex-direction: row;
+  align-items: flex-start;
+  gap: 6px;
   flex-shrink: 0;
-  width: 36px;
+  width: 72px;
   padding-top: 4px;
 }
 
 .cable-node--right .cable-node__head {
-  align-items: center;
+  flex-direction: row-reverse;
 }
 
 .cable-node__circle {
-  width: 32px;
-  height: 32px;
+  width: 34px;
+  height: 34px;
   border-radius: 50%;
-  background: linear-gradient(180deg, #60a5fa 0%, #2563eb 100%);
+  background: linear-gradient(180deg, #7dd3fc 0%, #2563eb 55%, #1d4ed8 100%);
   border: 2px solid #0f172a;
-  box-shadow: inset 0 -4px 0 rgba(0, 0, 0, 0.2);
+  box-shadow: inset 0 -5px 0 rgba(0, 0, 0, 0.25);
+  flex-shrink: 0;
 }
 
-.cable-node__count {
-  font-size: 0.55rem;
-  font-weight: 600;
-  color: #94a3b8;
-  margin-top: 2px;
+.cable-node__titles {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.cable-node__smfo {
+  font-size: 0.58rem;
+  font-weight: 700;
+  color: #f1f5f9;
+  line-height: 1.1;
 }
 
 .cable-node__label {
-  font-size: 0.6rem;
+  font-size: 0.52rem;
   line-height: 1.15;
-  color: #e2e8f0;
-  margin-top: 4px;
-  max-width: 36px;
+  color: #94a3b8;
   word-break: break-word;
   pointer-events: none;
 }
@@ -125,15 +139,15 @@
   flex: 1;
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  padding-top: 2px;
+  gap: 6px;
+  min-width: 0;
 }
 
 .cable-node__tube {
   display: flex;
   flex-direction: row;
-  align-items: flex-start;
-  gap: 4px;
+  align-items: stretch;
+  gap: 6px;
   position: relative;
 }
 
@@ -142,12 +156,10 @@
 }
 
 .cable-node__tube-bar {
-  width: 10px;
-  min-height: 40px;
+  width: 12px;
   border-radius: 2px;
   flex-shrink: 0;
   box-shadow: 0 0 0 1px #0f172a;
-  align-self: stretch;
 }
 
 .cable-node__tube-bar--striped {
@@ -160,40 +172,35 @@
   ) !important;
 }
 
-.cable-node__tube-label {
-  position: absolute;
-  top: 0;
-  left: 14px;
-  font-size: 0.55rem;
-  font-weight: 600;
-  color: #94a3b8;
-}
-
-.cable-node--right .cable-node__tube-label {
-  left: auto;
-  right: 14px;
-}
-
-.cable-node__fibers {
+.cable-node__tube-stack {
   flex: 1;
   display: flex;
   flex-direction: column;
-  position: relative;
-  padding-left: 4px;
+  gap: 2px;
+  min-width: 0;
 }
 
-.cable-node--right .cable-node__fibers {
-  padding-left: 0;
-  padding-right: 4px;
+.cable-node__tube-label {
+  font-size: 0.58rem;
+  font-weight: 700;
+  color: #cbd5e1;
+  line-height: 1;
+}
+
+.cable-node__fibers {
+  position: relative;
+  display: block;
+  flex: 1;
+  min-width: 0;
 }
 
 .cable-node__fiber-row {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 5px;
+  height: var(--fiber-pitch, 40px);
+  min-height: var(--fiber-pitch, 40px);
   position: relative;
-  font-size: 0.6rem;
-  color: #cbd5e1;
 }
 
 .cable-node--right .cable-node__fiber-row {
@@ -201,47 +208,54 @@
 }
 
 .cable-node__fiber-swatch {
-  width: 28px;
-  height: 3px;
+  width: 36px;
+  height: var(--fiber-strand, 3px);
   border-radius: 1px;
   flex-shrink: 0;
-}
-
-.cable-node__fiber-num {
-  min-width: 1.25rem;
-  color: #64748b;
-  font-size: 0.55rem;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.4);
 }
 
 .cable-node__fiber-code {
-  font-weight: 600;
-  min-width: 1.1rem;
+  font-size: 0.58rem;
+  font-weight: 700;
+  color: #e2e8f0;
+  min-width: 1.25rem;
 }
 
 .cable-node__circuit {
   font-size: 0.5rem;
   color: #94a3b8;
-  max-width: 72px;
+  white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  white-space: nowrap;
+  max-width: 88px;
 }
 
 .cable-node__handle {
+  position: absolute !important;
+  top: 50% !important;
+  transform: translateY(-50%);
   width: 6px !important;
   height: 6px !important;
   min-width: 6px !important;
   min-height: 6px !important;
-  background: #64748b !important;
+  background: #475569 !important;
   border: 1px solid #e2e8f0 !important;
-  opacity: 0;
+  opacity: 0.01;
 }
 
-.react-flow__handle {
-  width: 4px;
-  height: 4px;
-  min-width: 4px;
-  min-height: 4px;
+.cable-node--left .cable-node__handle {
+  right: -4px !important;
+  left: auto !important;
+}
+
+.cable-node--right .cable-node__handle {
+  left: -4px !important;
+  right: auto !important;
+}
+
+.react-flow__edge.selected .react-flow__edge-path {
+  stroke-width: 3px !important;
 }
 
 .splice-edge__dot {

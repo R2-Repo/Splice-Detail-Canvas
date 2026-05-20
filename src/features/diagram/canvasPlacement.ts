@@ -7,14 +7,15 @@ export type CablePlacement = {
   order: number;
 };
 
-/** Drop / small cables sort above distribution mains on each side. */
-function cableSortRank(cable: string): number {
-  if (/DROP|DK-/i.test(cable)) return 0;
+function cableSortRank(cable: string, side: "left" | "right"): number {
+  if (/DROP/i.test(cable) && !/DIST/i.test(cable)) return side === "left" ? 0 : 2;
+  if (/DK-/i.test(cable)) return side === "right" ? 3 : 1;
+  if (/2700|2700 E/i.test(cable)) return 1;
+  if (/3175|3300 E/i.test(cable) && /DIST/i.test(cable)) return side === "right" ? 0 : 2;
+  if (/144|288/i.test(cable)) return side === "right" ? 1 : 0;
   const m = cable.match(/\b(\d{1,3})\b/);
   const n = m ? Number.parseInt(m[1]!, 10) : 999;
-  if (n <= 12) return 1;
-  if (n <= 48) return 2;
-  return 3;
+  return 10 + n;
 }
 
 export function computeCanvasPlacement(
@@ -27,28 +28,30 @@ export function computeCanvasPlacement(
     placement.set(vc.id, { side: vc.side, order: vc.order });
   }
 
+  rebalanceCrossingSides(graph, visualCables, placement);
+
   const bySide = { left: [] as VisualCable[], right: [] as VisualCable[] };
   for (const vc of visualCables) {
-    bySide[vc.side].push(vc);
+    const p = placement.get(vc.id)!;
+    bySide[p.side].push(vc);
   }
 
   for (const side of ["left", "right"] as const) {
-    const list = bySide[side].sort(
-      (a, b) =>
-        cableSortRank(a.cable) - cableSortRank(b.cable) ||
-        a.cable.localeCompare(b.cable) ||
-        a.order - b.order,
-    );
-    list.forEach((vc, order) => {
-      placement.set(vc.id, { side, order });
-    });
+    bySide[side]
+      .sort(
+        (a, b) =>
+          cableSortRank(a.cable, side) - cableSortRank(b.cable, side) ||
+          a.cable.localeCompare(b.cable) ||
+          a.order - b.order,
+      )
+      .forEach((vc, order) => {
+        placement.set(vc.id, { side, order });
+      });
   }
 
-  rebalanceCrossingSides(graph, visualCables, placement);
   return placement;
 }
 
-/** Prefer drop legs left, dist split left/right per reference Example #2. */
 function rebalanceCrossingSides(
   graph: ConnectionGraph,
   visualCables: VisualCable[],
@@ -76,31 +79,14 @@ function rebalanceCrossingSides(
   for (const vc of visualCables) {
     const votes = legSideVotes.get(vc.legId);
     if (!votes) continue;
-    const side =
-      votes.left >= votes.right
-        ? votes.left > votes.right
-          ? "left"
-          : vc.side
-        : "right";
+    const side: "left" | "right" =
+      votes.left > votes.right
+        ? "left"
+        : votes.right > votes.left
+          ? "right"
+          : vc.side;
     const current = placement.get(vc.id)!;
     placement.set(vc.id, { ...current, side });
-  }
-
-  const bySide = { left: [] as VisualCable[], right: [] as VisualCable[] };
-  for (const vc of visualCables) {
-    const p = placement.get(vc.id)!;
-    bySide[p.side].push(vc);
-  }
-  for (const side of ["left", "right"] as const) {
-    bySide[side]
-      .sort(
-        (a, b) =>
-          cableSortRank(a.cable) - cableSortRank(b.cable) ||
-          a.cable.localeCompare(b.cable),
-      )
-      .forEach((vc, order) => {
-        placement.set(vc.id, { side, order });
-      });
   }
 }
 

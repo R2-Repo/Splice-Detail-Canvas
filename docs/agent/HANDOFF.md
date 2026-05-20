@@ -4,17 +4,17 @@
 
 ## Last updated
 
-2026-05-20 — Canvas rebuild vs paired Examples #1–#3 + project summary.
+2026-05-20 — Restored Example #1 ring-cut split (3 cable nodes).
 
 ## Done
 
-- **Composite cable nodes:** cable → buffer tube → fiber rows in one draggable node (matches summary §24–27)
-- **Visual cable grouping:** merge same cable name + canvas side; split 144 into two cylinders for Example #1 ring cut
-- **Canvas placement:** drop/DK sort above dist; from/to votes for left/right (CSV side is hint only)
-- **Circuit names:** OS column stored on `SplicePair.circuitName`, shown on fiber rows
-- **Splice edges:** larger step offset for cross-row splices (Example #2 GR/BR)
-- Tests: `CSV Splice Detail Example #1–3.csv`, `buildReactFlowGraph`, `visualCables`
-- Canonical spec: `docs/reference/examples/splice-detail-canvas-project-summary.md`
+- **Example #1 regression:** re-enabled `buildVisualCables` split for through 144 vs one drop leg → 1 drop + **2× 144** right (not one merged 144); equal 40px row/lane spacing kept
+- **Aligned splice rows:** each connection shares one horizontal Y on left and right (fixes crossover/straight routing)
+- **Cable placement:** Example #2 order (drop top-left, dist 2700 bottom-left, dist 3175 top-right, DK-6 bottom-right)
+- **Protect-in-place:** click any splice edge to toggle dashed gray line (no fusion dot); saved in `localStorage`
+- **Labels:** `006 SMFO (R2)` + cable name; circuit `(CH 2090)` on fiber rows
+- **Handles:** per fiber row (fixes misaligned edges)
+- **Wider canvas** (1400px layout width)
 
 ## Try it
 
@@ -22,12 +22,12 @@
 npm run dev
 ```
 
-Import `docs/reference/examples/CSV Splice Detail Example #1.csv` — expect **1 drop left, two 144 right**, 4 fusion splices.
+Import `CSV Splice Detail Example #2.csv` — click splice lines to mark existing/protect-in-place.
 
 ## Next
 
-- Visual polish vs PNGs (cylinder labels, CH labels, dashed protect-in-place toggle)
-- Example #3 crossover routing tuning
+- Match PNG typography/spacing exactly
+- Example #3 dense crossover tuning
 - PDF export (needs dep approval)
 
 ## Commands verified
