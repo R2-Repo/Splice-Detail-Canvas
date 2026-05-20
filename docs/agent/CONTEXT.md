@@ -11,15 +11,17 @@
 
 ## Current phase
 
-**CSV interpretation — Examples #1 & #2 pass (574/574, 4/4 Left rows).** Canvas/layout **frozen** until more example CSVs confirm leg rules on other splice types.
+**Canvas MVP rebuild** — composite cable nodes + placement for paired Examples #1–#3. Spec: [`splice-detail-canvas-project-summary.md`](../reference/examples/splice-detail-canvas-project-summary.md).
 
-**Import pipeline:** Direct Bentley parse → per-row results + failure taxonomy → `SpliceReport` → inspect report UI. No user CSV cleanup step. See [`CSV_SEMANTICS.md`](./CSV_SEMANTICS.md).
+**Working:** import CSV → composite cable nodes → splice edges with fusion dots; Example #1 = 3 cables / 4 edges; Example #2 = 4 cables / 6 edges.
+
+**Still to polish:** PNG parity (labels, dashed existing lines UI), Example #3 dense crossover layout.
 
 ## Active goals (next)
 
-- User: add 2–3 more example CSVs (butt, ring, multi-drop) with expected counts in `CSV_SEMANTICS.md`
-- After validation on real exports: resume canvas/layout (MVP-b)
-- MVP-c: visual parity, PDF export (needs dep approval)
+- Dashed “protect in place” toggle on selected splice
+- Finer layout scoring vs reference PNGs
+- PDF export (needs dep approval)
 
 ## Decisions
 

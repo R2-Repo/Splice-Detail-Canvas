@@ -40,6 +40,8 @@ export type SplicePair = {
   id: string;
   endpointA: FiberEndpoint;
   endpointB: FiberEndpoint;
+  /** Bentley OS column — circuit name (fiber-level). */
+  circuitName?: string;
   /** Soft hint from CSV Left / Right section. */
   csvSideHint?: "left" | "right";
 };

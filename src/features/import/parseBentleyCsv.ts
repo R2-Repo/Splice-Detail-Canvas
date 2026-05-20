@@ -283,11 +283,22 @@ export function parseDataRowWithResult(
 
   const { endpointA, endpointB } = normalized;
   const id = pairKey(endpointA, endpointB);
+  const circuitName = extractCircuitName(rightParts);
   return toParseRowResult(
     { line, lineNumber, endpointA, endpointB },
     csvSideHint,
     id,
+    circuitName,
   );
+}
+
+/** OS / circuit name from To-side tail (if present). */
+export function extractCircuitName(rightParts: string[]): string | undefined {
+  const p = trimExtraTrailingEmpties(
+    stripDuplicateTrailingFields(rightParts.map((s) => s.trim())),
+  );
+  const last = p[p.length - 1] ?? "";
+  return isOsField(last) ? last.trim() : undefined;
 }
 
 /** @deprecated Use parseDataRowWithResult — returns pair only for backward compatibility */

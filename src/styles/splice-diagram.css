@@ -62,59 +62,95 @@
   white-space: pre-wrap;
 }
 
-/* --- Splice schematic nodes --- */
+/* --- Composite cable node (cable → tube → fiber) --- */
 
 .splice-node {
   position: relative;
 }
 
-.cable-node {
+.cable-node--composite {
   display: flex;
-  align-items: center;
-  gap: 4px;
+  flex-direction: row;
+  align-items: flex-start;
+  gap: 6px;
+  min-width: 180px;
+  max-width: 220px;
 }
 
-.cable-node--right {
+.cable-node--right.cable-node--composite {
   flex-direction: row-reverse;
+  text-align: right;
+}
+
+.cable-node__head {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  flex-shrink: 0;
+  width: 36px;
+  padding-top: 4px;
+}
+
+.cable-node--right .cable-node__head {
+  align-items: center;
 }
 
 .cable-node__circle {
-  width: 28px;
-  height: 28px;
+  width: 32px;
+  height: 32px;
   border-radius: 50%;
-  background: #3b82f6;
+  background: linear-gradient(180deg, #60a5fa 0%, #2563eb 100%);
   border: 2px solid #0f172a;
-  flex-shrink: 0;
+  box-shadow: inset 0 -4px 0 rgba(0, 0, 0, 0.2);
 }
 
-.cable-node__stub {
-  width: 24px;
-  height: 3px;
-  background: #64748b;
+.cable-node__count {
+  font-size: 0.55rem;
+  font-weight: 600;
+  color: #94a3b8;
+  margin-top: 2px;
 }
 
 .cable-node__label {
-  font-size: 0.65rem;
-  max-width: 140px;
-  line-height: 1.2;
-  color: #cbd5e1;
+  font-size: 0.6rem;
+  line-height: 1.15;
+  color: #e2e8f0;
+  margin-top: 4px;
+  max-width: 36px;
+  word-break: break-word;
   pointer-events: none;
 }
 
-.buffer-tube-node {
-  width: 8px;
-  height: 48px;
+.cable-node__body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-top: 2px;
 }
 
-.buffer-tube-node__line {
-  width: 8px;
-  height: 40px;
+.cable-node__tube {
+  display: flex;
+  flex-direction: row;
+  align-items: flex-start;
+  gap: 4px;
+  position: relative;
+}
+
+.cable-node--right .cable-node__tube {
+  flex-direction: row-reverse;
+}
+
+.cable-node__tube-bar {
+  width: 10px;
+  min-height: 40px;
   border-radius: 2px;
-  transform: skewX(-12deg);
+  flex-shrink: 0;
   box-shadow: 0 0 0 1px #0f172a;
+  align-self: stretch;
 }
 
-.buffer-tube-node--striped .buffer-tube-node__line {
+.cable-node__tube-bar--striped {
   background-image: repeating-linear-gradient(
     45deg,
     transparent,
@@ -124,33 +160,81 @@
   ) !important;
 }
 
-.buffer-tube-node__label {
+.cable-node__tube-label {
   position: absolute;
-  top: -14px;
-  left: 50%;
-  transform: translateX(-50%);
-  font-size: 0.6rem;
+  top: 0;
+  left: 14px;
+  font-size: 0.55rem;
+  font-weight: 600;
   color: #94a3b8;
+}
+
+.cable-node--right .cable-node__tube-label {
+  left: auto;
+  right: 14px;
+}
+
+.cable-node__fibers {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  padding-left: 4px;
+}
+
+.cable-node--right .cable-node__fibers {
+  padding-left: 0;
+  padding-right: 4px;
+}
+
+.cable-node__fiber-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  position: relative;
+  font-size: 0.6rem;
+  color: #cbd5e1;
+}
+
+.cable-node--right .cable-node__fiber-row {
+  flex-direction: row-reverse;
+}
+
+.cable-node__fiber-swatch {
+  width: 28px;
+  height: 3px;
+  border-radius: 1px;
+  flex-shrink: 0;
+}
+
+.cable-node__fiber-num {
+  min-width: 1.25rem;
+  color: #64748b;
+  font-size: 0.55rem;
+}
+
+.cable-node__fiber-code {
+  font-weight: 600;
+  min-width: 1.1rem;
+}
+
+.cable-node__circuit {
+  font-size: 0.5rem;
+  color: #94a3b8;
+  max-width: 72px;
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.fiber-node {
-  width: 48px;
-  height: 8px;
-}
-
-.fiber-node__strand {
-  height: 3px;
-  width: 40px;
-  border-radius: 1px;
-}
-
-.fiber-node--left .fiber-node__strand {
-  margin-left: 8px;
-}
-
-.fiber-node--right .fiber-node__strand {
-  margin-right: 8px;
+.cable-node__handle {
+  width: 6px !important;
+  height: 6px !important;
+  min-width: 6px !important;
+  min-height: 6px !important;
+  background: #64748b !important;
+  border: 1px solid #e2e8f0 !important;
+  opacity: 0;
 }
 
 .react-flow__handle {
@@ -158,8 +242,6 @@
   height: 4px;
   min-width: 4px;
   min-height: 4px;
-  background: transparent;
-  border: none;
 }
 
 .splice-edge__dot {

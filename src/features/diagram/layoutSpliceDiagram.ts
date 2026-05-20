@@ -1,27 +1,25 @@
+import type { CablePlacement } from "@/features/diagram/canvasPlacement";
 import {
-  cableLegIdForEndpoint,
-  orderedFiberConnections,
-  pairEndpointsForSide,
-} from "@/features/diagram/buildConnectionGraph";
-import { tubeNodeId } from "@/features/diagram/tubeId";
+  CABLE_LAYOUT,
+  fiberRowOffsetInCable,
+  visualCableHeight,
+} from "@/features/diagram/cableLayoutMetrics";
+import { orderedFiberConnections } from "@/features/diagram/buildConnectionGraph";
+import type { VisualCable } from "@/features/diagram/visualCables";
 import type { ConnectionGraph, LayoutOverrides } from "@/types/splice";
 
 export const LAYOUT = {
-  width: 1100,
-  centerX: 550,
-  leftCableX: 48,
-  rightCableX: 1052,
-  startY: 120,
-  rowGap: 72,
-  tubeOffsetX: 120,
-  fiberInsetX: 280,
-  spliceGap: 24,
+  width: CABLE_LAYOUT.width,
+  centerX: CABLE_LAYOUT.width / 2,
+  leftCableX: CABLE_LAYOUT.leftX,
+  rightCableX: CABLE_LAYOUT.rightX,
+  startY: CABLE_LAYOUT.topY,
 } as const;
 
 export type DiagramLayout = {
   reportKey: string;
   rowYs: Map<string, number>;
-  cableYs: Map<string, number>;
+  cablePositions: Map<string, { x: number; y: number; height: number }>;
 };
 
 export const LAYOUT_STORAGE_PREFIX = "splice-detail-layout:";
@@ -34,34 +32,74 @@ export function reportStorageKey(graph: ConnectionGraph): string {
   return `${LAYOUT_STORAGE_PREFIX}${name}`;
 }
 
-export function computeDiagramLayout(graph: ConnectionGraph): DiagramLayout {
-  const fibers = orderedFiberConnections(graph);
-  const sorted = [...fibers].sort((a, b) => {
-    const aEnds = pairEndpointsForSide(a.pair, graph);
-    const bEnds = pairEndpointsForSide(b.pair, graph);
-    const aKey = `${aEnds.left.fiberNumber}-${aEnds.left.fiberColor}`;
-    const bKey = `${bEnds.left.fiberNumber}-${bEnds.left.fiberColor}`;
-    return aKey.localeCompare(bKey);
-  });
-
+export function computeDiagramLayout(
+  graph: ConnectionGraph,
+  visualCables: VisualCable[],
+  placement: Map<string, CablePlacement>,
+): DiagramLayout {
   const rowYs = new Map<string, number>();
-  sorted.forEach((conn, index) => {
-    rowYs.set(conn.id, LAYOUT.startY + index * LAYOUT.rowGap);
+  const cablePositions = new Map<
+    string,
+    { x: number; y: number; height: number }
+  >();
+
+  const leftCables = visualCables
+    .filter((vc) => (placement.get(vc.id)?.side ?? vc.side) === "left")
+    .sort(
+      (a, b) =>
+        (placement.get(a.id)?.order ?? 0) - (placement.get(b.id)?.order ?? 0),
+    );
+  const rightCables = visualCables
+    .filter((vc) => (placement.get(vc.id)?.side ?? vc.side) === "right")
+    .sort(
+      (a, b) =>
+        (placement.get(a.id)?.order ?? 0) - (placement.get(b.id)?.order ?? 0),
+    );
+
+  let leftY = CABLE_LAYOUT.topY;
+  for (const vc of leftCables) {
+    const h = visualCableHeight(vc);
+    cablePositions.set(vc.id, { x: CABLE_LAYOUT.leftX, y: leftY, height: h });
+    for (const tube of vc.tubes) {
+      for (const fiber of tube.fibers) {
+        rowYs.set(fiber.connectionId, leftY + fiberRowOffsetInCable(vc, fiber.connectionId));
+      }
+    }
+    leftY += h + CABLE_LAYOUT.cableGap;
+  }
+
+  let rightY = CABLE_LAYOUT.topY;
+  for (const vc of rightCables) {
+    const h = visualCableHeight(vc);
+    cablePositions.set(vc.id, {
+      x: CABLE_LAYOUT.rightX,
+      y: rightY,
+      height: h,
+    });
+    for (const tube of vc.tubes) {
+      for (const fiber of tube.fibers) {
+        const absY = rightY + fiberRowOffsetInCable(vc, fiber.connectionId);
+        const prev = rowYs.get(fiber.connectionId);
+        rowYs.set(
+          fiber.connectionId,
+          prev !== undefined ? (prev + absY) / 2 : absY,
+        );
+      }
+    }
+    rightY += h + CABLE_LAYOUT.cableGap;
+  }
+
+  const fibers = orderedFiberConnections(graph);
+  fibers.forEach((conn, index) => {
+    if (!rowYs.has(conn.id)) {
+      rowYs.set(conn.id, CABLE_LAYOUT.topY + index * CABLE_LAYOUT.fiberRowH);
+    }
   });
-
-  const cableYs = new Map<string, number>();
-  const leftLegs = graph.legs.filter((l) => l.side === "left");
-  const rightLegs = graph.legs.filter((l) => l.side === "right");
-  const midY =
-    LAYOUT.startY + ((Math.max(sorted.length, 1) - 1) * LAYOUT.rowGap) / 2;
-
-  for (const leg of leftLegs) cableYs.set(leg.id, midY);
-  for (const leg of rightLegs) cableYs.set(leg.id, midY);
 
   return {
     reportKey: reportStorageKey(graph),
     rowYs,
-    cableYs,
+    cablePositions,
   };
 }
 
@@ -74,89 +112,13 @@ export function applyLayoutOverrides(
 }
 
 export function nodePositionsForGraph(
-  graph: ConnectionGraph,
+  _graph: ConnectionGraph,
   layout: DiagramLayout,
   overrides?: LayoutOverrides,
 ): Record<string, { x: number; y: number }> {
   const positions: Record<string, { x: number; y: number }> = {};
-
-  for (const leg of graph.legs) {
-    const id = `cable-${leg.id}`;
-    const x = leg.side === "left" ? LAYOUT.leftCableX : LAYOUT.rightCableX;
-    const y = layout.cableYs.get(leg.id) ?? LAYOUT.startY;
-    positions[id] = { x, y };
+  for (const [id, pos] of layout.cablePositions) {
+    positions[`cable-${id}`] = { x: pos.x, y: pos.y };
   }
-
-  const tubeRowYs = new Map<string, number[]>();
-
-  for (const conn of graph.connections) {
-    if (conn.kind === "tube") {
-      const y = LAYOUT.startY;
-      const leftTubeId = tubeNodeId(conn.endpointA.legId, conn.endpointA.tubeColor);
-      const rightTubeId = tubeNodeId(conn.endpointB.legId, conn.endpointB.tubeColor);
-      positions[leftTubeId] = {
-        x: LAYOUT.leftCableX + LAYOUT.tubeOffsetX,
-        y,
-      };
-      positions[rightTubeId] = {
-        x: LAYOUT.rightCableX - LAYOUT.tubeOffsetX,
-        y,
-      };
-      positions[`splice-${conn.id}`] = { x: LAYOUT.centerX, y };
-      continue;
-    }
-
-    const rowY = layout.rowYs.get(conn.id) ?? LAYOUT.startY;
-    const ends = pairEndpointsForSide(conn.pair, graph);
-    const leftLeg = cableLegIdForEndpoint(ends.left);
-    const rightLeg = cableLegIdForEndpoint(ends.right);
-
-    const leftTubeId = tubeNodeId(leftLeg, ends.left.tubeColor);
-    const rightTubeId = tubeNodeId(rightLeg, ends.right.tubeColor);
-    const leftFiberId = `fiber-${conn.id}-L`;
-    const rightFiberId = `fiber-${conn.id}-R`;
-
-    recordTubeRow(tubeRowYs, leftTubeId, rowY);
-    recordTubeRow(tubeRowYs, rightTubeId, rowY);
-
-    positions[leftFiberId] = {
-      x: LAYOUT.centerX - LAYOUT.fiberInsetX,
-      y: rowY,
-    };
-    positions[rightFiberId] = {
-      x: LAYOUT.centerX + LAYOUT.fiberInsetX,
-      y: rowY,
-    };
-  }
-
-  for (const [tubeId, ys] of tubeRowYs) {
-    const avgY = ys.reduce((a, b) => a + b, 0) / ys.length;
-    const side = tubeSideFromNodeId(graph, tubeId);
-    positions[tubeId] = {
-      x:
-        side === "left"
-          ? LAYOUT.leftCableX + LAYOUT.tubeOffsetX
-          : LAYOUT.rightCableX - LAYOUT.tubeOffsetX,
-      y: avgY - 20,
-    };
-  }
-
   return applyLayoutOverrides(positions, overrides);
-}
-
-function recordTubeRow(map: Map<string, number[]>, tubeId: string, rowY: number) {
-  const list = map.get(tubeId) ?? [];
-  list.push(rowY);
-  map.set(tubeId, list);
-}
-
-function tubeSideFromNodeId(
-  graph: ConnectionGraph,
-  tubeId: string,
-): "left" | "right" {
-  const inner = tubeId.startsWith("tube-") ? tubeId.slice(5) : tubeId;
-  const sep = inner.lastIndexOf("|");
-  if (sep < 0) return "left";
-  const legId = inner.slice(0, sep);
-  return graph.legs.find((l) => l.id === legId)?.side ?? "left";
 }

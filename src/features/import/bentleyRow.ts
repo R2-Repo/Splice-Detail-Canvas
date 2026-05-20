@@ -21,6 +21,7 @@ export function toParseRowResult(
   row: NormalizedSpliceRow,
   csvSideHint: "left" | "right",
   pairId: string,
+  circuitName?: string,
 ): ParseRowResult {
   return {
     ok: true,
@@ -30,6 +31,7 @@ export function toParseRowResult(
       id: pairId,
       endpointA: row.endpointA,
       endpointB: row.endpointB,
+      circuitName,
       csvSideHint,
     },
   };

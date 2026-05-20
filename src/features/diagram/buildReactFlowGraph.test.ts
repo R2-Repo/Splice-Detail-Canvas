@@ -6,26 +6,57 @@ import { buildConnectionGraph } from "./buildConnectionGraph";
 import { buildReactFlowGraph } from "./buildReactFlowGraph";
 import { parseBentleyCsv } from "@/features/import/parseBentleyCsv";
 
-const example2Path = join(
-  process.cwd(),
-  "docs/reference/examples/Bentley OpenComms Output Example #2.csv",
-);
+const examples = join(process.cwd(), "docs/reference/examples");
 
 describe("buildReactFlowGraph", () => {
-  it("Example #2: two 144 legs + drop; one BL tube, one OR tube", () => {
-    const report = parseBentleyCsv(readFileSync(example2Path, "utf8"));
-    const graph = buildConnectionGraph(report);
-    const { nodes } = buildReactFlowGraph(graph);
+  it("Example #1 (ring cut): 1 drop left, two 144 legs right", () => {
+    const csv = readFileSync(
+      join(examples, "CSV Splice Detail Example #1.csv"),
+      "utf8",
+    );
+    const graph = buildConnectionGraph(parseBentleyCsv(csv));
+    const { nodes, edges } = buildReactFlowGraph(graph);
 
     const cables = nodes.filter((n) => n.type === "cable");
     expect(cables).toHaveLength(3);
 
-    const distCables = cables.filter((n) =>
-      (n.data as { label: string }).label.includes("144 DIST"),
+    const left = cables.filter(
+      (n) => (n.data as { side: string }).side === "left",
     );
-    expect(distCables).toHaveLength(2);
+    const right = cables.filter(
+      (n) => (n.data as { side: string }).side === "right",
+    );
+    expect(left).toHaveLength(1);
+    expect(right).toHaveLength(2);
+    expect(edges.filter((e) => e.type === "splice")).toHaveLength(4);
 
-    const tubes = nodes.filter((n) => n.type === "bufferTube");
-    expect(tubes).toHaveLength(2);
+    const drop = left[0]!.data as { tubes: { fibers: unknown[] }[] };
+    expect(drop.tubes[0]!.fibers).toHaveLength(4);
   });
+
+  it("Example #2: four cable nodes, six splice edges", () => {
+    const csv = readFileSync(
+      join(examples, "CSV Splice Detail Example #2.csv"),
+      "utf8",
+    );
+    const graph = buildConnectionGraph(parseBentleyCsv(csv));
+    const { nodes, edges } = buildReactFlowGraph(graph);
+
+    expect(nodes.filter((n) => n.type === "cable")).toHaveLength(4);
+    expect(nodes.filter((n) => n.type === "bufferTube")).toHaveLength(0);
+    expect(edges.filter((e) => e.type === "splice")).toHaveLength(6);
+  });
+
+  it("Example #3: composite cables only, 28 splices", () => {
+    const csv = readFileSync(
+      join(examples, "CSV Splice Detail Example #3.csv"),
+      "utf8",
+    );
+    const graph = buildConnectionGraph(parseBentleyCsv(csv));
+    const { nodes, edges } = buildReactFlowGraph(graph);
+
+    expect(nodes.every((n) => n.type === "cable")).toBe(true);
+    expect(edges.filter((e) => e.type === "splice")).toHaveLength(28);
+  });
+
 });

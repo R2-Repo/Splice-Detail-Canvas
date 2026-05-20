@@ -20,6 +20,7 @@ export function SpliceEdge({
   data,
 }: EdgeProps) {
   const d = (data ?? {}) as SpliceEdgeData;
+  const verticalSpan = Math.abs(targetY - sourceY);
   const [path, labelX, labelY] = getSmoothStepPath({
     sourceX,
     sourceY,
@@ -28,7 +29,7 @@ export function SpliceEdge({
     sourcePosition,
     targetPosition,
     borderRadius: 0,
-    offset: 8,
+    offset: verticalSpan > 40 ? Math.min(verticalSpan * 0.35, 120) : 8,
   });
 
   const stroke = d.color ?? "#e2e8f0";

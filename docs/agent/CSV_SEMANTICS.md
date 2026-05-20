@@ -1,6 +1,6 @@
 # Bentley splice CSV — semantics
 
-> **Status:** Example #1 and #2 validate on Left `---` rows. Canvas/layout still frozen until more export types are confirmed.
+> **Status:** Parser validates on paired **CSV Splice Detail Examples #1–#3** (see matrix below). Canvas/layout must match **Splice Detail Example #1–#3** PNGs — see [`splice-detail-canvas-project-summary.md`](../reference/examples/splice-detail-canvas-project-summary.md).
 > **Owner:** User + agents. Update when new example CSVs arrive.
 
 ## Import strategy (confirmed)
@@ -80,17 +80,17 @@ Fixed fields from the end: `fiber#`, `tube`, `fiber`, `device` [, `OS`]. OS valu
 
 **Limit:** Large splices with partial Right `---` weaken mirror heuristics — may need manual leg IDs later.
 
-## Example matrix
+## Example matrix (paired CSV ↔ splice detail image)
 
-| ID | File | Expected pairs | Notes |
-|----|------|----------------|-------|
-| #2 | `Bentley OpenComms Output Example #2.csv` | 4 | Small mid-span; full Right mirror |
-| #1 | `Bentley OpenComms Output Example #1.csv` | 574 | Large butt; partial Right (30 rows) |
-| A | *(needed)* Simple 2-cable butt | TBD | Baseline 72↔72 |
-| B | *(needed)* Ring cut, few strands | TBD | Leg split without huge pair count |
-| C | *(needed)* Multi-drop + through 288 | TBD | Left/right stacking |
+| ID | CSV | Image | Left rows | Parsed pairs | Visual target |
+|----|-----|-------|-----------|--------------|---------------|
+| **1** | `CSV Splice Detail Example #1.csv` | `Splice Detail Example #1.png` | 4 | 4 | Ring cut: 6-drop → 144 (fibers 11–12 + blank-To rows) |
+| **2** | `CSV Splice Detail Example #2.csv` | `Splice Detail Example #2.png` | 6 | 6 | 4 cables; cross-side splices (GR/BR); dashed through pairs |
+| **3** | `CSV Splice Detail Example #3.csv` | `Splice Detail Example #3.png` | 28 | 28 | 144 + 24 + DK-6; multi-cable same-side routing |
 
-Drop new files in `docs/reference/examples/` with expected pair count in this table.
+Legacy large export: `Bentley OpenComms Output Example #1.csv` (574 pairs) — stress test, not paired to a simple diagram.
+
+Drop new files in `docs/reference/examples/` with expected counts in this table.
 
 ## Validation workflow
 

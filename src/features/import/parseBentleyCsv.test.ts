@@ -6,7 +6,7 @@ import { parseBentleyCsv } from "./parseBentleyCsv";
 
 const example2Path = join(
   process.cwd(),
-  "docs/reference/examples/Bentley OpenComms Output Example #2.csv",
+  "docs/reference/examples/CSV Splice Detail Example #2.csv",
 );
 
 const SAMPLE_ROW =
@@ -19,17 +19,17 @@ describe("parseBentleyCsv", () => {
     expect(report.pairs).toHaveLength(1);
   });
 
-  it("parses Example #2 with 4 deduped pairs", () => {
+  it("parses Example #2 with 6 deduped pairs", () => {
     const csv = readFileSync(example2Path, "utf8");
     const report = parseBentleyCsv(csv);
 
-    expect(report.header.spliceNumber).toBe("SP-3022.4");
-    expect(report.pairs).toHaveLength(4);
+    expect(report.header.spliceNumber).toBe("SP-2090.4.5");
+    expect(report.pairs).toHaveLength(6);
 
     const cables = new Set(
       report.pairs.flatMap((p) => [p.endpointA.cable, p.endpointB.cable]),
     );
-    expect(cables.has("6-SMF DROP: MVC MP 3.1 & HARVEST MOON DR")).toBe(true);
-    expect(cables.has("144 DIST: 2100 N TO HARVEST HILLS")).toBe(true);
+    expect(cables.has("6 DROP (TSC): 3300 S & 3175 E")).toBe(true);
+    expect(cables.has("DIST 18. 3300 S 3175 E/3300 E")).toBe(true);
   });
 });
