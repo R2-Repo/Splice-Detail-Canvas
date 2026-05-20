@@ -4,28 +4,40 @@
 
 ## Product
 
-Node workflow canvas PWA for splice/detail-style workflows. Frontend only.
+**Splice Detail Canvas** — frontend PWA that imports Bentley OpenComms CSV splice reports, auto-generates splice detail diagrams on a React Flow canvas, allows drag-to-polish, and exports PDFs matching industry visual style.
 
-**Product definition:** [`SCOPE.md`](./SCOPE.md) (awaiting user input).  
-**Reference files:** [`docs/reference/`](../reference/) (examples, images, resources).
+**Full spec:** [`SCOPE.md`](./SCOPE.md)  
+**Reference:** [`docs/reference/`](../reference/) (CSVs, PDFs, images)
 
 ## Current phase
 
-**Bootstrap complete** — Vite + React + React Flow shell. Scope doc + reference folder ready. Awaiting user scope.
+**Scope defined — begin MVP-a implementation.**
 
-## Active goals
+Bootstrap (Vite + React 19 + React Flow shell) is complete. Next: CSV parser → domain model → layout → custom splice nodes.
 
-- [ ] Define domain node types and edges (user input needed)
-- [ ] Persist graph state (localStorage vs export — TBD)
-- [ ] Custom node UI for “detail” panels
+## Active goals (MVP-a)
+
+- [ ] Bentley CSV parser + splice-pair graph (Example #2 first)
+- [ ] Fiber color code library (12-color, striped `*-BK`)
+- [ ] Auto-layout with CSV side hints (optimizer may override)
+- [ ] Custom schematic nodes (cable circle, thick tube, thin strand, black-dot splice)
+- [ ] CSV import UI on canvas
+- [ ] `npm run dev` for live local preview
 
 ## Decisions
 
 | Topic | Choice | Notes |
 |-------|--------|-------|
-| Canvas | `@xyflow/react` | Standard for node editors |
-| State | Local component state for now | Lift to store when complexity grows |
-| Styling | Plain CSS in `src/styles/` | Add Tailwind only if user requests |
+| Canvas | `@xyflow/react` | Interaction layer; not generic workflow UI |
+| Architecture | Model-first | CSV → graph → layout → canvas → export |
+| CSV | Connected pairs only | Matches Bentley export setting |
+| Left/Right in CSV | Soft hints | Layout optimizer may reassign sides |
+| Dashed lines | Manual only | “Existing / protect in place”; not in CSV |
+| PDF screenshots | Visual spec | Text in PDFs low priority |
+| PDFs vs CSVs | Unrelated examples | No 1:1 mapping |
+| Persistence | localStorage (MVP) | Layout overrides separate from CSV |
+| New npm deps | User approval required | PDF lib TBD |
+| Dev server | `npm run dev` | Vite, usually localhost:5173 |
 
 ## Blockers
 
@@ -33,5 +45,6 @@ _None._
 
 ## Out of scope (until requested)
 
-- Backend / auth
-- Real-time collaboration
+- Backend / auth / collaboration
+- Bentley API integration
+- 6-count buffer tube rules

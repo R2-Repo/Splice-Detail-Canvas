@@ -8,9 +8,9 @@ This folder is **not** bundled into the production app unless you explicitly imp
 
 | Folder | Use for |
 |--------|---------|
-| [`examples/`](./examples/) | Sample docs, specs, PDFs, markdown notes, exported graphs |
-| [`images/`](./images/) | Screenshots, mockups, diagrams, icons for reference |
-| [`resources/`](./resources/) | Links lists, spreadsheets, data samples, other assets |
+| [`examples/`](./examples/) | Bentley CSV inputs, PDF visual references |
+| [`images/`](./images/) | PNG screenshots of splice detail layouts, 144ct color code chart |
+| [`resources/`](./resources/) | Other assets |
 
 ## Tips
 

@@ -1,55 +1,282 @@
-# Product scope
+# Product scope — Splice Detail Canvas
 
-> **Owner:** Fill this in when you define the product. Agents: read before coding; update only when the user changes requirements—not every session.
+> **Owner:** User-defined (2026-05). Agents: read before coding; update only when the user changes requirements.
 
-**Status:** Draft — awaiting product definition from the user.
+**Status:** Defined — ready for MVP implementation.
 
 ---
 
 ## Vision
 
-_TBD — What problem does Splice Detail Canvas solve?_
+Replace the painful **Bentley OpenComms Designer splice-detail diagram** step. Bentley exports good **CSV data** but bad **diagrams**; polishing a splice detail in Bentley can take **~1 hour** even for a simple case.
+
+**Splice Detail Canvas** is a frontend PWA that:
+
+1. Imports Bentley **CSV splice reports** (connected pairs only)
+2. Auto-generates a splice detail diagram (~**95% complete**)
+3. Lets users **drag and polish** on a **node canvas** (lines stay connected and reroute)
+4. Exports a PDF whose **graphics and layout** match industry splice-detail style (not Bentley’s messy output)
+
+**Not the goal:** Replace Bentley for network design — only splice-detail **diagram authoring**.
+
+---
 
 ## Users
 
-_TBD — Who uses it and in what context?_
+Fiber/telecom designers and field engineers who export Bentley splice CSVs and need presentable splice detail sheets (butt splices, mid-span / ring-cut splices, drop cables, etc.).
+
+---
+
+## Reference material (two unrelated roles)
+
+| Source | Location | Role |
+|--------|----------|------|
+| CSV examples | [`docs/reference/examples/*.csv`](../reference/examples/) | **Data** — connectivity, colors, metadata |
+| PDF examples | [`docs/reference/examples/Splice detail example #*.pdf`](../reference/examples/) | **Visual style** only (ignore PDF text for requirements) |
+| PNG screenshots | [`docs/reference/images/`](../reference/images/) | Primary visual spec (cable/tube/strand graphics) |
+| Color code chart | `144ct-fiber-color-code.png` in images | Fiber numbering 1–144 |
+
+**PDFs and CSVs are independent random examples** — do not map PDF #1 → CSV #1.
+
+---
+
+## Architecture decision: node canvas (not static SVG-only)
+
+Past attempts at **static layout → PDF** failed because **human polish is always required**.
+
+**Chosen stack:**
+
+```
+CSV → domain model (splice-pair graph) → auto-layout → React Flow canvas (edit) → PDF/SVG export
+```
+
+- **Model-first:** parser and layout are independent of the view layer.
+- **React Flow:** interaction layer — drag cable/tube/fiber groups; splice edges reroute uniformly.
+- **Export:** from **model + saved layout**, not a one-shot screenshot.
+
+See [`ARCHITECTURE.md`](./ARCHITECTURE.md) for folder layout.
+
+---
 
 ## Primary workflows
 
-_TBD — Main tasks on the canvas (create splice, inspect detail, connect nodes, export, etc.)._
+1. **Import** — upload/drop Bentley CSV splice report
+2. **Auto-generate** — parse pairs, build graph, run layout (~95%)
+3. **Review & adjust** — drag elements; toggle dashed “existing” lines; fix spacing
+4. **Export PDF** — visual layout parity with reference screenshots
 
-## Canvas & nodes
+---
 
-### Node types
+## Bentley CSV semantics
 
-| Type | Purpose | Data fields |
-|------|---------|-------------|
-| _TBD_ | | |
+### Export setting
 
-### Edges & connections
+User exports with **“Spliced / connected pairs only”**. CSV rows = **only spliced fibers**, not full cable inventories.
 
-_TBD — Allowed connections, validation rules, labels._
+- Do **not** draw unspliced pass-through strands.
+- Example: 144ct mid-span with 2 splices → **2 rows**, not 144.
 
-### Detail UI
+### Report structure
 
-_TBD — What appears in node detail panels; layout; editing behavior._
+| Section | Meaning |
+|---------|---------|
+| Header | Device type, model, name, ID, date, location, splice # |
+| `Left ---` | Rows with initial **left-side hint** |
+| `Right ---` | Rows with initial **right-side hint** (often mirrors Left) |
+
+Each row = one **splice pair**:
+
+```
+From: [Device], [Cable], [Buffer #], [Tube color], [Fiber color]
+  <->
+To:   [Cable], [Buffer #], [Tube color], [Fiber color], [Device], [OS]
+```
+
+### Parse vs layout
+
+| Layer | Rule |
+|-------|------|
+| **Connection graph** | Authoritative — every row → `SplicePair { endpointA, endpointB }`; dedupe mirrored Left/Right rows |
+| **Side hints** | CSV Left/Right = **soft** starting placement only |
+| **Layout optimizer** | May **reorder and reassign visual side** when CSV is suboptimal or mistaken; maximize straight horizontal splices |
+| **User overrides** | Persist layout separately from CSV |
+
+Same-side splices (both endpoints on same edge) are valid — they still meet in the **center splice zone**.
+
+---
+
+## Splice types
+
+### Butt splice / full splice
+
+Two separate cables joined strand-for-strand (e.g. 72↔72 = 72 pairs; 144↔48 = 48 pairs).
+
+### Ring cut / mid-span splice
+
+Case on a **through** cable; only cut/spliced strands appear in CSV.
+
+- Same physical cable may appear as **two legs** (in/out of case) plus drop cables → **3+ cable nodes** in diagram.
+- `CableNode` = **cable leg in this diagram**, not always one physical cable ID.
+
+---
+
+## Fiber domain model (MVP: 12-count tubes)
+
+### Hierarchy
+
+```
+Splice
+  └── Cable leg(s)
+        └── Buffer tube(s) — 12 fibers each, color-coded
+              └── Fiber strand(s) — spliced pairs only
+```
+
+### 12-color code (tube and fiber)
+
+Blue, Orange, Green, Brown, Slate, White, Red, Black, Yellow, Violet, Rose, Aqua.
+
+| # | Color | CSV abbrev |
+|---|-------|------------|
+| 1–12 | (above) | BL, OR, GR, BR, SL, WH, RD, BK, YL, VI, RO, AQ |
+
+**144-count:** 12 tubes × 12 fibers. Fiber N → tube `ceil(N/12)`, fiber color `(N-1) % 12 + 1`.
+
+**288-count (fibers 145–288):** **striped** tubes — CSV uses compound codes (`BL-BK`, `OR-BK`, …). Stripe **graphic TBD** (no screenshot reference); parser must handle codes (see Example #1 CSV).
+
+**6-count tubes:** deferred (older 6/12/18/24/36 ct cables).
+
+---
+
+## Visual design (from PDF screenshots)
+
+**Priority: graphics and layout. PDF text/labels are low priority.**
+
+### Line-weight hierarchy
+
+| Element | Appearance | Weight |
+|---------|------------|--------|
+| **Cable** | Circle + horizontal stub at outer edge | Largest |
+| **Buffer tube** | Thick colored diagonal from cable toward center | Medium |
+| **Fiber strand** | Thin colored line, horizontal toward center | Thin |
+| **Fusion splice** | Small **black dot** where strands meet | Point |
+
+### Layout (fan-out)
+
+```
+[Cable] → [Tube] → [Fiber] ─── center splice (black dot) ─── [Fiber] ← [Tube] ← [Cable]
+  left edge      fans right              meet here                 fans left    right edge
+```
+
+- Auto-layout: maximize **straight horizontal** left↔right pairs; **orthogonal elbows** (H–V–H) when Y differs.
+- Same-side pairs still meet in center.
+
+### Line styles
+
+- **Solid** — default on import
+- **Dashed** — “Existing (Protect in Place)” — **manual toggle only** (not in CSV); persist in layout
+
+### Legend
+
+- `• Fusion Splice Required`
+- `--- Existing (Protect in Place)` (dashed)
+
+---
+
+## Canvas node & edge types
+
+| Node | Purpose |
+|------|---------|
+| `CableNode` | Cable leg; circle + stub; scale by role/size |
+| `BufferTubeNode` | Thick colored tube segment; striped flag |
+| `FiberStrandNode` | Thin colored strand toward center |
+| `LegendNode` | Symbol key |
+| `SpliceHeaderNode` | Optional CSV header (secondary) |
+
+| Edge | Purpose |
+|------|---------|
+| `SpliceEdge` | Fusion splice; orthogonal route; black dot; dashed if user marks existing |
+| Breakout/containment | Internal cable→tube→fiber structure |
+
+---
 
 ## Data & persistence
 
-_TBD — localStorage, JSON export/import, none for MVP, etc._
+| Concern | MVP approach |
+|---------|----------------|
+| Import | Bentley CSV (examples in `docs/reference/examples/`) |
+| Internal model | `SpliceReport` + `SplicePair[]` + layout positions |
+| Layout overrides | `localStorage` (positions, dashed flags, manual side tweaks) |
+| Export | PDF from model + layout (library **needs user approval** before adding) |
 
-## MVP (first shippable version)
+---
 
-- [ ] _TBD_
+## MVP (phased)
 
-## Out of scope
+**Locked choices:** visual/layout parity (not text); auto-layout + manual edit.
 
-- _TBD — List explicit non-goals to prevent scope creep._
+### MVP-a — prove pipeline (target: screenshot #3 complexity)
+
+- [ ] Fiber color code lib (12 colors, 144 math, striped `*-BK` parse)
+- [ ] CSV parser (header, Left/Right, dedupe mirrors)
+- [ ] Spliced-pairs-only graph builder; mid-span cable legs
+- [ ] Side hints + basic layout optimizer
+- [ ] Custom nodes: cable circle, thick tube, thin strand
+- [ ] SpliceEdge with black dot + elbow routing
+- [ ] Import UI + canvas display
+- [ ] Test with **Example #2 CSV** (`SP-3022.4`, 4 pairs)
+
+### MVP-b — scale
+
+- [ ] Example #1 CSV (large splice, striped tubes)
+- [ ] Performance tuning for many edges
+- [ ] Pagination strategy for PDF
+- [ ] Manual dashed-line toggle
+
+### MVP-c — polish
+
+- [ ] Visual parity pass vs all 4 screenshot layouts
+- [ ] PDF export
+- [ ] Stripe tube graphic finalized
+
+---
+
+## Out of scope (initial)
+
+- Bentley live integration / API
+- Full 6-count tube rules
+- Authoring splices without CSV
+- GIS / network map
+- Backend, auth, collaboration
+- Non-Bentley CSV formats
+
+---
 
 ## Success criteria
 
-_TBD — How we know MVP is done (measurable or demo-able)._
+- Import both example CSVs; only **spliced** fibers drawn
+- Mid-span: same cable name can appear as multiple legs
+- Small splice matches reference **visual style** (fan-out, weights, splice dots)
+- User can drag groups; edges reroute
+- Large splice readable (pagination OK)
+- Time to usable diagram: **minutes**, not hours
 
-## Reference material
+---
 
-See [`docs/reference/`](../reference/) for example documents, images, and resources the user adds over time.
+## Open items (TBD with user)
+
+1. Stripe graphic on buffer tubes (145–288)
+2. PDF pagination rules for large splices
+3. Branding (logo, title block, footer)
+
+---
+
+## Local development
+
+```bash
+npm install
+npm run dev
+```
+
+Open the URL Vite prints (usually `http://localhost:5173`) to view the app live.
+
+Quality gates: `npm run check`, `npm run test:ci`, `npm run build`.

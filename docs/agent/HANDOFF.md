@@ -4,31 +4,33 @@
 
 ## Last updated
 
-2026-05-19 — Scope template + reference folder.
+2026-05-19 — Product scope fully defined in `SCOPE.md`.
 
 ## Done
 
-- Vite + React 19 + TypeScript + PWA plugin
-- React Flow canvas with two starter nodes
-- Agent docs, `AGENTS.md`, Cursor rules
-- Vitest smoke test, CI workflow
-- `docs/agent/SCOPE.md` (template, user to fill)
-- `docs/reference/` (`examples/`, `images/`, `resources/`)
+- Vite + React 19 + TypeScript + PWA + React Flow bootstrap
+- Agent docs, CI, tests
+- **Scope definition complete** (CSV semantics, splice types, visual spec from PDF screenshots, node canvas architecture)
+- Reference examples: 2 CSVs, 4 PDFs in `docs/reference/examples/`
+- User provided PNG screenshots of 4 PDFs + 144ct color code chart (add to `docs/reference/images/` when convenient)
 
-## Next
+## Next (MVP-a)
 
-- User defines product in `SCOPE.md` (or via chat → agent transcribes)
-- User drops reference files into `docs/reference/` as needed
-- Confirm domain model (node types, data shape)
-- Add custom node components under `src/features/canvas/nodes/`
-- Decide persistence (JSON export, localStorage, etc.)
+1. Read `docs/agent/SCOPE.md` end-to-end
+2. Implement Bentley CSV parser → `SplicePair` domain model (start with Example #2)
+3. Fiber color code lib in `src/lib/` or `src/features/diagram/`
+4. Basic auto-layout + custom React Flow nodes (cable / tube / strand / splice edge)
+5. CSV file import UI wired to canvas
+6. Run `npm run dev` for live preview at http://localhost:5173
 
-## Commands verified
+## Commands verified (bootstrap)
 
 - `npm run check`
 - `npm run test:ci`
 - `npm run build`
+- `npm run dev` — local web server for live app
 
 ## Warnings
 
-- `.git/config` still has a `[submodule]` section from an old copy; safe to remove manually if git acts odd.
+- Do not add npm packages without user approval (PDF export lib later).
+- PDF screenshots should live in `docs/reference/images/` for future agents.
