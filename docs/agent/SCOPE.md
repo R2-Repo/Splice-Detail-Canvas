@@ -145,6 +145,24 @@ Blue, Orange, Green, Brown, Slate, White, Red, Black, Yellow, Violet, Rose, Aqua
 
 **6-count tubes:** deferred (older 6/12/18/24/36 ct cables).
 
+### Full buffer tube collapse (space-saving rule)
+
+When an **entire buffer tube** is spliced to another buffer tube — **all 12 fibers** paired, same tube **color**, same tube **count** (12-fiber tubes) — the diagram **does not break out individual fiber strands**.
+
+Instead, show **thick buffer tube line → thick buffer tube line** (tube-to-tube splice in the center, with fusion splice dot). It is **implied** that all 12 fibers within each tube are spliced strand-for-strand (BL↔BL, OR↔OR, … within the tube).
+
+| Condition | Render |
+|-----------|--------|
+| All 12 fibers in tube A ↔ all 12 in tube B, same tube color | **Tube-to-tube only** (no fiber breakout) |
+| Only some fibers in a tube spliced | Break out **only those** fiber strands |
+| Mixed: part of tube full, part partial | Full tubes collapsed; partial tubes show individual fibers |
+
+**Detection (from CSV pairs):** Group splice rows by `(cable leg, tube color, buffer #)` on each side. If 12 matching pairs exist with consistent fiber-color pairing within the tube, collapse to one tube-level connection.
+
+**Layout benefit:** Fewer lines, less vertical space, cleaner diagrams for butt splices where whole tubes are joined.
+
+**User override (optional later):** Expand a collapsed tube to show individual fibers for inspection — not required for MVP unless needed.
+
 ---
 
 ## Visual design (from PDF screenshots)
@@ -167,8 +185,15 @@ Blue, Orange, Green, Brown, Slate, White, Red, Black, Yellow, Violet, Rose, Aqua
   left edge      fans right              meet here                 fans left    right edge
 ```
 
+**Full tube collapse:** when all 12 fibers in a tube splice to another full tube (same color), skip the fiber tier:
+
+```
+[Cable] → [Tube] ═══════════ center splice (black dot) ═══════════ [Tube] ← [Cable]
+```
+
 - Auto-layout: maximize **straight horizontal** left↔right pairs; **orthogonal elbows** (H–V–H) when Y differs.
 - Same-side pairs still meet in center.
+- Prefer tube-level connections whenever the full-tube rule applies.
 
 ### Line styles
 
@@ -194,7 +219,8 @@ Blue, Orange, Green, Brown, Slate, White, Red, Black, Yellow, Violet, Rose, Aqua
 
 | Edge | Purpose |
 |------|---------|
-| `SpliceEdge` | Fusion splice; orthogonal route; black dot; dashed if user marks existing |
+| `SpliceEdge` | Fusion splice between **fibers** or **whole tubes** (when collapsed); orthogonal route; black dot; dashed if user marks existing |
+| `TubeSpliceEdge` | Tube-to-tube connection when full 12-fiber collapse applies (may reuse `SpliceEdge` with tube-level handles) |
 | Breakout/containment | Internal cable→tube→fiber structure |
 
 ---
@@ -216,6 +242,7 @@ Blue, Orange, Green, Brown, Slate, White, Red, Black, Yellow, Violet, Rose, Aqua
 
 ### MVP-a — prove pipeline (target: screenshot #3 complexity)
 
+- [ ] **Full buffer tube collapse** — detect 12/12 same-color tube splices; render tube-to-tube (no fiber breakout)
 - [ ] Fiber color code lib (12 colors, 144 math, striped `*-BK` parse)
 - [ ] CSV parser (header, Left/Right, dedupe mirrors)
 - [ ] Spliced-pairs-only graph builder; mid-span cable legs
@@ -256,7 +283,7 @@ Blue, Orange, Green, Brown, Slate, White, Red, Black, Yellow, Violet, Rose, Aqua
 - Import both example CSVs; only **spliced** fibers drawn
 - Mid-span: same cable name can appear as multiple legs
 - Small splice matches reference **visual style** (fan-out, weights, splice dots)
-- User can drag groups; edges reroute
+- Full-tube splices render as **tube-to-tube** lines (not 12 fiber breakouts) when all 12 fibers in a same-color tube are spliced
 - Large splice readable (pagination OK)
 - Time to usable diagram: **minutes**, not hours
 

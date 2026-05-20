@@ -32,6 +32,7 @@ Bootstrap (Vite + React 19 + React Flow shell) is complete. Next: CSV parser →
 | Architecture | Model-first | CSV → graph → layout → canvas → export |
 | CSV | Connected pairs only | Matches Bentley export setting |
 | Left/Right in CSV | Soft hints | Layout optimizer may reassign sides |
+| Full tube splice | Tube-to-tube collapse | All 12 fibers same-color tube → no fiber breakout |
 | Dashed lines | Manual only | “Existing / protect in place”; not in CSV |
 | PDF screenshots | Visual spec | Text in PDFs low priority |
 | PDFs vs CSVs | Unrelated examples | No 1:1 mapping |
