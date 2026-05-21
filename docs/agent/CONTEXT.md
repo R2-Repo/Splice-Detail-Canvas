@@ -22,12 +22,22 @@
 - Finer layout scoring vs reference PNGs (typography)
 - PDF export (needs dep approval)
 
-## Recent layout (2026-05-20)
+## Layout invariants (locked)
 
-- **Row order:** through-cable fiber # (not CSV tail order) — fixes Ex #3 RD/BK CH 2101 sitting below OR tube
-- Cable sheath height scales with buffer-tube vertical span + tube count
-- Multi-tube cables pushed further outward (64px/tube) for longer buffer-tube reach
-- Buffer tube endpoints vertically centered on their fiber groups (Ex #3 parity)
+**Canonical rules:** [`LAYOUT_RULES.md`](./LAYOUT_RULES.md) — 21 rule IDs (FBR/TUB/CBL/ROW/DOM/EDGE).  
+**Enforcement:** `src/features/diagram/layoutRules.ts` + `layoutRules.test.ts` (Examples #1–#3 contract).  
+**Agent rule:** `.cursor/rules/layout-rules.mdc` — **alwaysApply** (every agent request).
+
+When adding layout behavior: update rules doc + checker + contract test in the same change.
+
+## Recent layout (2026-05-21)
+
+- **Layout rules contract:** `LAYOUT_RULES.md`, `layoutRules.ts`, 52 contract tests on reference CSVs
+- **Edge routing init fix:** splice lane registry syncs on mount; fixes overlapping strands on Example #2 import
+- **Tube invariants:** strands top→bottom by TIA fiber #; 24px pitch within each buffer tube
+- **Dominant pair:** straight-across priority for largest left↔right cable group
+- **Ring-cut splits (Ex #1):** extra splice-row gap between split visual cables
+- Prior: through-cable row order; sheath/tube geometry parity
 
 ## Decisions
 
@@ -36,6 +46,7 @@
 | CSV import | Direct interpret + internal normalize | No cleaned.csv rewrite |
 | Canvas | `@xyflow/react` | Frozen until parse gap = 0 on user files |
 | Architecture | Model-first | `tokenize → parse → normalize → SpliceReport` |
+| Layout regressions | Rules doc + contract tests | Must pass before merge |
 | Left/Right in CSV | Left = pairs; Right = leg hints | Right may be partial (Ex #1) |
 | New npm deps | User approval required | PDF lib TBD |
 

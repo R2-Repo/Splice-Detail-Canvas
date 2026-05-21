@@ -1,5 +1,10 @@
-import { Handle, Position, type NodeProps } from "@xyflow/react";
-import type { CSSProperties } from "react";
+import {
+  Handle,
+  Position,
+  useUpdateNodeInternals,
+  type NodeProps,
+} from "@xyflow/react";
+import { useEffect, type CSSProperties } from "react";
 
 import { CABLE_LAYOUT } from "@/features/diagram/cableLayoutMetrics";
 import { computeCableBreakout } from "@/features/diagram/cableBreakoutGeometry";
@@ -20,11 +25,12 @@ function tubeStroke(
   };
 }
 
-export function CableNode({ data }: NodeProps) {
+export function CableNode({ id, data }: NodeProps) {
   const d = data as CableNodeData;
   const handlePos = d.side === "left" ? Position.Right : Position.Left;
   const pitch = d.fiberPitch ?? CABLE_LAYOUT.fiberRowH;
   const scale = d.diagramScale ?? 1;
+  const updateNodeInternals = useUpdateNodeInternals();
 
   const geo = computeCableBreakout(
     d.tubes,
@@ -35,15 +41,23 @@ export function CableNode({ data }: NodeProps) {
     scale,
   );
 
+  useEffect(() => {
+    updateNodeInternals(id);
+  }, [id, d.side, d.tubes, geo.viewWidth, geo.viewHeight, updateNodeInternals]);
+
   const fiberByHandle = new Map(
     geo.tubes.flatMap((t) =>
       t.fibers.map((f) => [f.handleId, f] as const),
     ),
   );
 
-  const allFibers = d.tubes.flatMap((tube) =>
-    tube.fibers.map((fiber) => ({ tube, fiber })),
-  );
+  const allFibers = d.tubes
+    .flatMap((tube) => tube.fibers.map((fiber) => ({ tube, fiber })))
+    .sort(
+      (a, b) =>
+        a.fiber.fiberNumber - b.fiber.fiberNumber ||
+        a.fiber.rowYOffset - b.fiber.rowYOffset,
+    );
 
   return (
     <div

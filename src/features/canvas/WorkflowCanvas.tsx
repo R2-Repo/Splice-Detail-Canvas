@@ -6,8 +6,11 @@ import {
   ReactFlowProvider,
   useEdgesState,
   useNodesState,
+  useReactFlow,
+  useUpdateNodeInternals,
   type Edge,
   type Node,
+  type OnNodeDrag,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { useCallback, useRef, useState } from "react";
@@ -16,9 +19,15 @@ import { spliceEdgeTypes } from "@/features/canvas/edgeTypes";
 import {
   existingIdsFromEdges,
   loadLayoutOverrides,
+  mergeLayoutOverrides,
   positionsFromNodes,
   saveLayoutOverrides,
 } from "@/features/canvas/layoutStorage";
+import type { CableNodeData } from "@/features/canvas/nodes/types";
+import {
+  displaySideFromCanvasX,
+  visualCableIdFromNodeId,
+} from "@/features/diagram/cableDisplaySide";
 import { spliceNodeTypes } from "@/features/canvas/nodeTypes";
 import { buildConnectionGraph } from "@/features/diagram/buildConnectionGraph";
 import { buildReactFlowGraph } from "@/features/diagram/buildReactFlowGraph";
@@ -31,6 +40,8 @@ const emptyNodes: Node[] = [];
 const emptyEdges: Edge[] = [];
 
 function WorkflowCanvasInner() {
+  const { fitView } = useReactFlow();
+  const updateNodeInternals = useUpdateNodeInternals();
   const [nodes, setNodes, onNodesChange] = useNodesState(emptyNodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState(emptyEdges);
   const reportKeyRef = useRef<string | null>(null);
@@ -40,14 +51,20 @@ function WorkflowCanvasInner() {
   const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
 
   const persistLayout = useCallback(
-    (nextNodes: Node[], nextEdges: Edge[]) => {
+    (
+      nextNodes: Node[],
+      nextEdges: Edge[],
+      cableSidesPatch?: Record<string, "left" | "right">,
+    ) => {
       const key = reportKeyRef.current;
       if (!key) return;
-      saveLayoutOverrides({
-        reportKey: key,
-        positions: positionsFromNodes(nextNodes),
-        existingEdgeIds: existingIdsFromEdges(nextEdges),
-      });
+      saveLayoutOverrides(
+        mergeLayoutOverrides(key, {
+          positions: positionsFromNodes(nextNodes),
+          existingEdgeIds: existingIdsFromEdges(nextEdges),
+          cableSides: cableSidesPatch,
+        }),
+      );
     },
     [],
   );
@@ -67,24 +84,67 @@ function WorkflowCanvasInner() {
       setNodes(nextNodes);
       setEdges(nextEdges);
       setSelectedEdgeId(null);
+      requestAnimationFrame(() => {
+        fitView({ padding: 0.25, duration: 200 });
+      });
       const title =
         report.header.spliceNumber ?? report.header.name ?? fileName;
       setMeta(
         `${title} — ${report.pairs.length} pair(s), ${graph.connections.length} connection(s)`,
       );
     },
-    [setNodes, setEdges],
+    [setNodes, setEdges, fitView],
   );
 
-  const onNodeDragStop = useCallback(() => {
-    setNodes((current) => {
-      setEdges((currentEdges) => {
-        persistLayout(current, currentEdges);
-        return currentEdges;
+  const onNodeDragStop: OnNodeDrag<Node> = useCallback(
+    (_, node) => {
+      if (node.type !== "cable") {
+        setNodes((current) => {
+          setEdges((currentEdges) => {
+            persistLayout(current, currentEdges);
+            return currentEdges;
+          });
+          return current;
+        });
+        return;
+      }
+
+      const visualId = visualCableIdFromNodeId(node.id);
+      if (!visualId) return;
+
+      const newSide = displaySideFromCanvasX(node.position.x);
+      const prevSide = (node.data as CableNodeData).side;
+      const sideChanged = newSide !== prevSide;
+
+      setNodes((current) => {
+        const nextNodes = sideChanged
+          ? current.map((n) =>
+              n.id === node.id
+                ? {
+                    ...n,
+                    data: { ...(n.data as CableNodeData), side: newSide },
+                  }
+                : n,
+            )
+          : current;
+        setEdges((currentEdges) => {
+          persistLayout(
+            nextNodes,
+            currentEdges,
+            sideChanged ? { [visualId]: newSide } : undefined,
+          );
+          return currentEdges;
+        });
+        if (sideChanged) {
+          requestAnimationFrame(() => {
+            updateNodeInternals(node.id);
+          });
+        }
+        return nextNodes;
       });
-      return current;
-    });
-  }, [setNodes, setEdges, persistLayout]);
+    },
+    [setNodes, setEdges, persistLayout, updateNodeInternals],
+  );
 
   const onEdgeClick = useCallback(
     (_: React.MouseEvent, edge: Edge) => {
@@ -124,7 +184,8 @@ function WorkflowCanvasInner() {
           </button>
         ) : null}
         <span className="workflow-canvas__hint">
-          Click a splice line to toggle protect-in-place (dashed, no dot)
+          Drag a cable past center to mirror it; click a splice line to toggle
+          protect-in-place
         </span>
         {selectedEdgeId ? (
           <span className="workflow-canvas__meta">Selected: {selectedEdgeId}</span>

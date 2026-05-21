@@ -70,9 +70,7 @@ export function fiberRowOffsetInCable(
   if (!fiber) return CABLE_LAYOUT.headerH;
 
   const rowStart = CABLE_LAYOUT.headerH + CABLE_LAYOUT.tubeLabelH;
-  return (
-    rowStart + fiber.rowYOffset + CABLE_LAYOUT.fiberRowH / 2
-  );
+  return rowStart + fiber.rowYOffset + CABLE_LAYOUT.fiberRowH / 2;
 }
 
 export function fiberRowOffsetInTubes(
@@ -84,8 +82,18 @@ export function fiberRowOffsetInTubes(
     .find((f) => f.connectionId === connectionId);
   if (!fiber) return CABLE_LAYOUT.headerH;
   const rowStart = CABLE_LAYOUT.headerH + CABLE_LAYOUT.tubeLabelH;
+  return rowStart + fiber.rowYOffset + CABLE_LAYOUT.fiberRowH / 2;
+}
+
+export function compactVisualCableHeight(fiberCount: number): number {
+  if (fiberCount <= 0) return CABLE_LAYOUT.headerH;
+  const maxYOffset = Math.max(0, fiberCount - 1) * FIBER_ROW_PITCH;
   return (
-    rowStart + fiber.rowYOffset + CABLE_LAYOUT.fiberRowH / 2
+    CABLE_LAYOUT.headerH +
+    CABLE_LAYOUT.tubeLabelH +
+    maxYOffset +
+    CABLE_LAYOUT.fiberRowH +
+    CABLE_LAYOUT.tubeGap
   );
 }
 

@@ -31,7 +31,9 @@ export function SpliceEdge({
 
   const { routingLane, activeLaneCount } = useRoutingLaneIndex(
     id,
+    sourceX,
     sourceY,
+    targetX,
     targetY,
     fallbackLane,
     useDynamicLanes,

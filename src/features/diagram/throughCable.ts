@@ -3,6 +3,7 @@ import type { FiberEndpoint } from "@/types/splice";
 /** Main distribution cable (not drop / DK stub). */
 export function isThroughCableName(cable: string): boolean {
   if (/DROP|DK-/i.test(cable)) return false;
+  if (/\bDIST\b/i.test(cable)) return true;
   return /\b(144|288|96|48|24)\b/.test(cable);
 }
 

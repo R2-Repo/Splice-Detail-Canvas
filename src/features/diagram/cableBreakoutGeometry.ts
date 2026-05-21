@@ -155,14 +155,13 @@ export function computeCableBreakout(
 
     const fibers: FiberBreakoutGeom[] = tube.fibers.map((fiber) => {
       const rowY = bodyTop + fiber.rowYOffset + pitch / 2;
-      const fanFrom = { x: endX, y: endY };
       return {
         handleId: fiber.handleId,
         rowIndex: fiber.rowIndex,
         rowY,
         fiberColor: fiber.fiberColor,
         tubeColor: fiber.tubeColor,
-        fanFrom,
+        fanFrom: { x: endX, y: endY },
         fanTo: { x: stemX, y: rowY },
       };
     });

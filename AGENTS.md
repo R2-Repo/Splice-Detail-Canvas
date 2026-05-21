@@ -10,6 +10,7 @@ Frontend-only React PWA: node/workflow canvas (React Flow). No backend unless th
 | `docs/agent/CONTEXT.md` | Current focus, decisions, blockers |
 | `docs/agent/HANDOFF.md` | Last session summary for the next agent |
 | `docs/agent/ARCHITECTURE.md` | Folders, patterns, extension points |
+| `docs/agent/LAYOUT_RULES.md` | **Must-keep** cable/tube/fiber layout invariants + test contract |
 | `docs/reference/` | User-provided examples, images, resources (when cited) |
 
 ## Workflow
@@ -17,8 +18,10 @@ Frontend-only React PWA: node/workflow canvas (React Flow). No backend unless th
 1. Read SCOPE, then CONTEXT + HANDOFF before coding.
 2. Plan in bullets; ask if requirements are unclear.
 3. Implement in `src/` using existing patterns.
-4. Run `npm run check`, `npm run test:ci`, `npm run build`.
-5. Update CONTEXT + HANDOFF before ending the session.
+4. Run **`npm run test:layout`** (layout contract — **required every session** with code changes).
+5. Run `npm run check`, `npm run test:ci`, `npm run build`.
+6. Layout changes: update `LAYOUT_RULES.md` + `layoutRules.ts` + `layoutRules.test.ts` together.
+7. Update CONTEXT + HANDOFF before ending the session.
 
 ## Constraints
 
@@ -37,10 +40,12 @@ Frontend-only React PWA: node/workflow canvas (React Flow). No backend unless th
 ## Commands
 
 ```bash
-npm run dev      # local dev server
-npm run check    # typecheck
-npm run test:ci  # unit tests
-npm run build    # production build
+npm run dev         # local dev server
+npm run test:layout # layout contract (Examples #1–#3) — run before finishing
+npm run check       # typecheck
+npm run test:ci     # all unit tests
+npm run build       # production build
+npm run verify      # layout + check + test:ci + build
 ```
 
 ## Response style

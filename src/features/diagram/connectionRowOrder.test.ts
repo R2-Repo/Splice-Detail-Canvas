@@ -65,4 +65,19 @@ describe("connectionRowOffsets", () => {
       true,
     );
   });
+
+  it("adds split-instance gap for Example #1 ring-cut 144 pair", () => {
+    const graph = buildConnectionGraph(
+      parseBentleyCsv(
+        readFileSync(join(examples, "CSV Splice Detail Example #1.csv"), "utf8"),
+      ),
+    );
+    const visual = buildVisualCables(graph);
+    const offsets = connectionRowOffsets(graph, visual);
+    const values = [...offsets.values()].sort((a, b) => a - b);
+    const steps = values.slice(1).map((y, i) => y - values[i]!);
+    expect(steps.some((step) => step > FIBER_ROW_PITCH + TUBE_GROUP_GAP)).toBe(
+      true,
+    );
+  });
 });

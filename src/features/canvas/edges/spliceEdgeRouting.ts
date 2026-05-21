@@ -1,10 +1,12 @@
-import { useEffect, useReducer } from "react";
+import { useEffect, useLayoutEffect, useReducer } from "react";
 
 import { SPLICE_LANE_SEP } from "@/features/diagram/cableLayoutMetrics";
 
 export type SpliceEdgeRouteEntry = {
   id: string;
+  sourceX: number;
   sourceY: number;
+  targetX: number;
   targetY: number;
   fallbackLane: number;
 };
@@ -23,17 +25,22 @@ export function sortSpliceRouteEntries(
 }
 
 /**
- * When the right cable sits below the left, upper fibers must drop on a lane
- * farther right than lower fibers so horizontal legs do not cross vertical legs.
+ * When the diagram-right endpoint sits below diagram-left, upper fibers use a
+ * lane farther toward the target so horizontal legs do not cross vertical legs.
+ * Works when either endpoint is dragged to the opposite screen side.
  */
 export function effectiveRoutingLane(
   rank: number,
   laneCount: number,
+  sourceX: number,
   sourceY: number,
+  targetX: number,
   targetY: number,
 ): number {
   if (laneCount <= 1) return 0;
-  if (targetY > sourceY + 0.5) {
+  const leftY = sourceX <= targetX ? sourceY : targetY;
+  const rightY = sourceX <= targetX ? targetY : sourceY;
+  if (rightY > leftY + 0.5) {
     return laneCount - 1 - rank;
   }
   return rank;
@@ -51,7 +58,9 @@ export function routingLaneFromEntries(
   return effectiveRoutingLane(
     rank,
     laneCount,
+    entry.sourceX,
     entry.sourceY,
+    entry.targetX,
     entry.targetY,
   );
 }
@@ -101,8 +110,9 @@ export function spliceMidX(
   routingLane: number,
   laneCount: number,
 ): number {
+  const towardTarget = targetX >= sourceX ? 1 : -1;
   const laneOffset =
-    (routingLane - (laneCount - 1) / 2) * SPLICE_LANE_SEP;
+    (routingLane - (laneCount - 1) / 2) * SPLICE_LANE_SEP * towardTarget;
   return (sourceX + targetX) / 2 + laneOffset;
 }
 
@@ -125,19 +135,29 @@ function entrySignature(entries: Iterable<SpliceEdgeRouteEntry>): string {
     .sort((a, b) => a.id.localeCompare(b.id))
     .map(
       (e) =>
-        `${e.id}:${Math.round(e.sourceY)}:${Math.round(e.targetY)}:${e.fallbackLane}`,
+        `${e.id}:${Math.round(e.sourceX)}:${Math.round(e.sourceY)}:${Math.round(e.targetX)}:${Math.round(e.targetY)}:${e.fallbackLane}`,
     )
     .join("|");
+}
+
+function notifySubscribers() {
+  for (const sub of registry.subscribers) sub();
+}
+
+/** Sync lane recompute when subscribers exist; skip signature commit if nobody listens yet. */
+function flushNotify() {
+  const next = entrySignature(registry.entries.values());
+  if (registry.subscribers.size === 0) return;
+  if (next === registry.signature) return;
+  registry.signature = next;
+  notifySubscribers();
 }
 
 function scheduleNotify() {
   if (registry.raf) return;
   registry.raf = requestAnimationFrame(() => {
     registry.raf = 0;
-    const next = entrySignature(registry.entries.values());
-    if (next === registry.signature) return;
-    registry.signature = next;
-    for (const sub of registry.subscribers) sub();
+    flushNotify();
   });
 }
 
@@ -153,7 +173,9 @@ function removeEntry(id: string) {
 
 export function useRoutingLaneIndex(
   edgeId: string,
+  sourceX: number,
   sourceY: number,
+  targetX: number,
   targetY: number,
   fallbackLane: number,
   enabled: boolean,
@@ -161,10 +183,12 @@ export function useRoutingLaneIndex(
 ): { routingLane: number; activeLaneCount: number } {
   const [, bump] = useReducer((n: number) => n + 1, 0);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!enabled) return;
     const sub = () => bump();
     registry.subscribers.add(sub);
+    // Initial import: RAF may have fired before any edge subscribed.
+    flushNotify();
     return () => {
       registry.subscribers.delete(sub);
       removeEntry(edgeId);
@@ -183,7 +207,14 @@ export function useRoutingLaneIndex(
     };
   }
 
-  publishEntry({ id: edgeId, sourceY, targetY, fallbackLane });
+  publishEntry({
+    id: edgeId,
+    sourceX,
+    sourceY,
+    targetX,
+    targetY,
+    fallbackLane,
+  });
 
   const entries = [...registry.entries.values()];
   const activeLaneCount = Math.max(laneCountHint, entries.length, 1);
@@ -192,4 +223,15 @@ export function useRoutingLaneIndex(
     routingLane: routingLaneFromEntries(entries, edgeId),
     activeLaneCount,
   };
+}
+
+/** @internal test helper */
+export function resetSpliceRouteRegistryForTests(): void {
+  registry.entries.clear();
+  registry.signature = "";
+  registry.subscribers.clear();
+  if (registry.raf) {
+    cancelAnimationFrame(registry.raf);
+    registry.raf = 0;
+  }
 }

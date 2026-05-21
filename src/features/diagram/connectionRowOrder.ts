@@ -3,9 +3,17 @@ import {
   pairEndpointsForSide,
 } from "@/features/diagram/buildConnectionGraph";
 import {
+  CABLE_LAYOUT,
+  compactVisualCableHeight,
   FIBER_ROW_PITCH,
   TUBE_GROUP_GAP,
 } from "@/features/diagram/cableLayoutMetrics";
+import type { DominantCablePair } from "@/features/diagram/dominantCablePair";
+import { parentVisualGroupKey } from "@/features/diagram/dominantCablePair";
+import {
+  connectionInDominantPair,
+  dominantPairFiberSortKey,
+} from "@/features/diagram/dominantCablePair";
 import {
   canonicalLayoutEndpoint,
   isThroughCableName,
@@ -22,16 +30,39 @@ function layoutSortKey(
 ): [number, number, string] {
   const ep = canonicalLayoutEndpoint(left, right);
   const throughRank = isThroughCableName(ep.cable) ? 0 : 1;
-  return [throughRank, ep.fiberNumber, ep.tubeColor];
+  const fiberKey =
+    isThroughCableName(left.cable) || isThroughCableName(right.cable)
+      ? ep.fiberNumber
+      : Math.max(left.fiberNumber, right.fiberNumber);
+  return [throughRank, fiberKey, ep.tubeColor];
 }
 
-/** Row order: through-cable fiber #, then tube, then CSV order — not raw parse order. */
+/** Row order: dominant pair block first, then through-cable fiber # / tube / CSV order. */
 export function connectionsInRowLayoutOrder(
   graph: ConnectionGraph,
+  visualCables?: RowLayoutVisualCableRef[],
+  dominant?: DominantCablePair | null,
 ): FiberConnection[] {
   const list = orderedFiberConnections(graph);
   const index = new Map(list.map((c, i) => [c.id, i]));
   return [...list].sort((a, b) => {
+    if (dominant && visualCables) {
+      const aDom = connectionInDominantPair(a, graph, visualCables, dominant)
+        ? 0
+        : 1;
+      const bDom = connectionInDominantPair(b, graph, visualCables, dominant)
+        ? 0
+        : 1;
+      if (aDom !== bDom) return aDom - bDom;
+      if (aDom === 0) {
+        return (
+          dominantPairFiberSortKey(a, graph) -
+            dominantPairFiberSortKey(b, graph) ||
+          (index.get(a.id) ?? 0) - (index.get(b.id) ?? 0)
+        );
+      }
+    }
+
     const aEnds = pairEndpointsForSide(a.pair, graph);
     const bEnds = pairEndpointsForSide(b.pair, graph);
     const aKey = layoutSortKey(aEnds.left, aEnds.right);
@@ -58,20 +89,146 @@ function rowStepAfter(
   current: FiberConnection,
   next: FiberConnection,
   graph: ConnectionGraph,
+  visualCables?: RowLayoutVisualCableRef[],
+  dominant?: DominantCablePair | null,
 ): number {
   const sameTube =
     layoutTubeKey(current, graph) === layoutTubeKey(next, graph);
-  return FIBER_ROW_PITCH + (sameTube ? 0 : TUBE_GROUP_GAP);
+  let step = FIBER_ROW_PITCH + (sameTube ? 0 : TUBE_GROUP_GAP);
+  if (visualCables) {
+    step += splitInstanceGapAtBoundary(current, next, visualCables);
+    step += stubGroupGapAtBoundary(
+      current,
+      next,
+      graph,
+      visualCables,
+      dominant,
+    );
+  }
+  return step;
+}
+
+/** Extra gap when leaving the dominant pair row block for stub cables. */
+function stubGroupGapAtBoundary(
+  current: FiberConnection,
+  next: FiberConnection,
+  graph: ConnectionGraph,
+  visualCables: RowLayoutVisualCableRef[],
+  dominant?: DominantCablePair | null,
+): number {
+  if (!dominant) return 0;
+  const currDom = connectionInDominantPair(
+    current,
+    graph,
+    visualCables,
+    dominant,
+  );
+  const nextDom = connectionInDominantPair(
+    next,
+    graph,
+    visualCables,
+    dominant,
+  );
+  if (!currDom || nextDom) return 0;
+  const stubCount = visualCableFiberCount(visualCables, next.id);
+  const h = compactVisualCableHeight(Math.max(1, stubCount));
+  return Math.max(0, h + CABLE_LAYOUT.cableGap - FIBER_ROW_PITCH);
+}
+
+function visualCableFiberCount(
+  visualCables: RowLayoutVisualCableRef[],
+  connectionId: string,
+): number {
+  for (const vc of visualCables) {
+    const has = vc.tubes.some((t) =>
+      t.fibers.some((f) => f.connectionId === connectionId),
+    );
+    if (has) {
+      return vc.tubes.flatMap((t) => t.fibers).length;
+    }
+  }
+  return 1;
+}
+
+/** Minimal visual-cable shape — avoids import cycle with visualCables.ts. */
+export type RowLayoutVisualCableRef = {
+  id: string;
+  side: "left" | "right";
+  tubes: { fibers: { connectionId: string }[] }[];
+};
+
+function parentVisualCableKey(visualId: string): string {
+  return visualId.replace(/~\d+$/, "");
+}
+
+function visualCableForConnection(
+  visualCables: RowLayoutVisualCableRef[],
+  connectionId: string,
+  side: "left" | "right",
+): RowLayoutVisualCableRef | undefined {
+  return visualCables.find(
+    (vc) =>
+      vc.side === side &&
+      vc.tubes.some((t) =>
+        t.fibers.some((f) => f.connectionId === connectionId),
+      ),
+  );
+}
+
+/**
+ * Ring-cut splits (e.g. two 144 cylinders) need extra row spacing so each
+ * visual cable can row-align without overlapping the sibling instance.
+ */
+export function ringCutSplitBoundaryBetween(
+  current: FiberConnection,
+  next: FiberConnection,
+  visualCables: RowLayoutVisualCableRef[],
+): boolean {
+  for (const side of ["left", "right"] as const) {
+    const currVc = visualCableForConnection(visualCables, current.id, side);
+    const nextVc = visualCableForConnection(visualCables, next.id, side);
+    if (!currVc || !nextVc || currVc.id === nextVc.id) continue;
+    if (parentVisualGroupKey(currVc.id) === parentVisualGroupKey(nextVc.id)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function splitInstanceGapAtBoundary(
+  current: FiberConnection,
+  next: FiberConnection,
+  visualCables: RowLayoutVisualCableRef[],
+): number {
+  for (const side of ["left", "right"] as const) {
+    const currVc = visualCableForConnection(visualCables, current.id, side);
+    const nextVc = visualCableForConnection(visualCables, next.id, side);
+    if (!currVc || !nextVc || currVc.id === nextVc.id) continue;
+    if (parentVisualCableKey(currVc.id) !== parentVisualCableKey(nextVc.id)) {
+      continue;
+    }
+    const fiberCount = Math.max(
+      currVc.tubes.flatMap((t) => t.fibers).length,
+      nextVc.tubes.flatMap((t) => t.fibers).length,
+    );
+    const h = compactVisualCableHeight(fiberCount);
+    return Math.max(0, h + CABLE_LAYOUT.cableGap - FIBER_ROW_PITCH);
+  }
+  return 0;
 }
 
 /** Stable row index per splice — drives vertical spacing and fiber order in cable nodes. */
 export function connectionRowIndexMap(
   graph: ConnectionGraph,
+  visualCables?: RowLayoutVisualCableRef[],
+  dominant?: DominantCablePair | null,
 ): Map<string, number> {
   const map = new Map<string, number>();
-  connectionsInRowLayoutOrder(graph).forEach((conn, index) => {
-    map.set(conn.id, index);
-  });
+  connectionsInRowLayoutOrder(graph, visualCables, dominant).forEach(
+    (conn, index) => {
+      map.set(conn.id, index);
+    },
+  );
   return map;
 }
 
@@ -81,15 +238,27 @@ export function connectionRowIndexMap(
  */
 export function connectionRowOffsets(
   graph: ConnectionGraph,
+  visualCables?: RowLayoutVisualCableRef[],
+  dominant?: DominantCablePair | null,
 ): Map<string, number> {
   const map = new Map<string, number>();
-  const connections = connectionsInRowLayoutOrder(graph);
+  const connections = connectionsInRowLayoutOrder(
+    graph,
+    visualCables,
+    dominant,
+  );
   let y = 0;
 
   for (let i = 0; i < connections.length; i++) {
     map.set(connections[i]!.id, y);
     if (i < connections.length - 1) {
-      y += rowStepAfter(connections[i]!, connections[i + 1]!, graph);
+      y += rowStepAfter(
+        connections[i]!,
+        connections[i + 1]!,
+        graph,
+        visualCables,
+        dominant,
+      );
     }
   }
 

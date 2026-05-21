@@ -5,7 +5,7 @@ alwaysApply: true
 
 # Splice Detail Canvas
 
-Read `AGENTS.md`, then `docs/agent/SCOPE.md`, `CONTEXT.md`, and `HANDOFF.md` before coding. Use `docs/reference/` when the user cites files there.
+Read `AGENTS.md`, then `docs/agent/SCOPE.md`, `CONTEXT.md`, and `HANDOFF.md` before coding. For diagram/canvas layout work, also read `docs/agent/LAYOUT_RULES.md`. Use `docs/reference/` when the user cites files there.
 
 ## Stack
 
@@ -19,6 +19,13 @@ React 19 + Vite + TypeScript + `@xyflow/react`. Frontend PWA only.
 - Use `@/` imports; keep features under `src/features/`.
 - End sessions by updating CONTEXT + HANDOFF.
 
-## Quality
+## Quality (non-optional)
 
-Run `npm run check`, `npm run test:ci`, and `npm run build` before finishing substantive work.
+Before finishing substantive work:
+
+1. `npm run test:layout` — **layout contract** (Examples #1–#3; cable/tube/fiber invariants)
+2. `npm run check`
+3. `npm run test:ci`
+4. `npm run build`
+
+If `test:layout` fails, fix regressions before ending the session. See `docs/agent/LAYOUT_RULES.md`.

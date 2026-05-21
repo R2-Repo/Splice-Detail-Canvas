@@ -4,9 +4,16 @@ import {
   pairEndpointsForSide,
 } from "@/features/diagram/buildConnectionGraph";
 import {
+  FIBER_ROW_PITCH,
+  TUBE_GROUP_GAP,
+} from "@/features/diagram/cableLayoutMetrics";
+import {
   connectionRowIndexMap,
   connectionRowOffsets,
+  type RowLayoutVisualCableRef,
 } from "@/features/diagram/connectionRowOrder";
+import type { DominantCablePair } from "@/features/diagram/dominantCablePair";
+import { findDominantCablePair } from "@/features/diagram/dominantCablePair";
 import { isThroughCableName } from "@/features/diagram/throughCable";
 import type {
   CableLeg,
@@ -27,7 +34,10 @@ export type VisualFiber = {
   handleId: string;
   /** Global splice row (0-based) — ordering only. */
   rowIndex: number;
-  /** Cumulative vertical offset (px) including buffer-tube group gaps. */
+  /**
+   * Compact offset within this cable (even 24px pitch, TIA fiber # order top→bottom).
+   * Never stretched to match global splice-row gaps — spacing within a tube is fixed.
+   */
   rowYOffset: number;
 };
 
@@ -117,37 +127,78 @@ function chunk<T>(items: T[], parts: number): T[][] {
   return out;
 }
 
+/** Even strand spacing inside one buffer tube; order follows fiber # not splice row. */
+function compactTubeOffsets(fibers: LegFiberRef[]): Map<string, number> {
+  const sorted = [...fibers].sort(
+    (a, b) =>
+      a.endpoint.fiberNumber - b.endpoint.fiberNumber ||
+      a.rowIndex - b.rowIndex,
+  );
+  const offsets = new Map<string, number>();
+  sorted.forEach((f, index) => {
+    offsets.set(f.connectionId, index * FIBER_ROW_PITCH);
+  });
+  return offsets;
+}
+
 function buildTubes(fibers: LegFiberRef[]): VisualTube[] {
-  const byTube = new Map<TubeColorCode, VisualFiber[]>();
+  const byTube = new Map<TubeColorCode, LegFiberRef[]>();
   for (const f of fibers) {
     const list = byTube.get(f.endpoint.tubeColor) ?? [];
-    list.push({
-      connectionId: f.connectionId,
-      fiberNumber: f.endpoint.fiberNumber,
-      fiberColor: f.endpoint.fiberColor,
-      tubeColor: f.endpoint.tubeColor,
-      circuitName: f.circuitName,
-      handleId: `fiber-${f.connectionId}`,
-      rowIndex: f.rowIndex,
-      rowYOffset: f.rowYOffset,
-    });
+    list.push(f);
     byTube.set(f.endpoint.tubeColor, list);
   }
-  return [...byTube.entries()]
-    .sort(([a], [b]) => a.localeCompare(b))
-    .map(([tubeColor, tubeFibers]) => ({
+
+  let tubeBaseOffset = 0;
+  const tubes: VisualTube[] = [];
+
+  for (const [tubeColor, tubeFibers] of [...byTube.entries()].sort(([a], [b]) =>
+    a.localeCompare(b),
+  )) {
+    const sorted = [...tubeFibers].sort(
+      (a, b) =>
+        a.endpoint.fiberNumber - b.endpoint.fiberNumber ||
+        a.rowIndex - b.rowIndex,
+    );
+    const compact = compactTubeOffsets(sorted);
+    const maxCompact = sorted.reduce(
+      (max, f) => Math.max(max, compact.get(f.connectionId) ?? 0),
+      0,
+    );
+
+    tubes.push({
       tubeColor,
-      fibers: tubeFibers.sort((a, b) => a.rowIndex - b.rowIndex),
-    }));
+      fibers: sorted.map((f) => ({
+        connectionId: f.connectionId,
+        fiberNumber: f.endpoint.fiberNumber,
+        fiberColor: f.endpoint.fiberColor,
+        tubeColor: f.endpoint.tubeColor,
+        circuitName: f.circuitName,
+        handleId: `fiber-${f.connectionId}`,
+        rowIndex: f.rowIndex,
+        rowYOffset: tubeBaseOffset + (compact.get(f.connectionId) ?? 0),
+      })),
+    });
+
+    if (sorted.length > 0) {
+      tubeBaseOffset += maxCompact + FIBER_ROW_PITCH + TUBE_GROUP_GAP;
+    }
+  }
+
+  return tubes;
 }
 
 function groupKey(leg: CableLeg): string {
   return `${leg.side}::${leg.cable}`;
 }
 
-export function buildVisualCables(graph: ConnectionGraph): VisualCable[] {
-  const rowIndex = connectionRowIndexMap(graph);
-  const rowOffsets = connectionRowOffsets(graph);
+export function buildVisualCables(
+  graph: ConnectionGraph,
+  splitLayoutHint?: RowLayoutVisualCableRef[],
+  dominant?: DominantCablePair | null,
+): VisualCable[] {
+  const rowIndex = connectionRowIndexMap(graph, splitLayoutHint, dominant);
+  const rowOffsets = connectionRowOffsets(graph, splitLayoutHint, dominant);
   const groups = new Map<
     string,
     {
@@ -210,6 +261,17 @@ export function buildVisualCables(graph: ConnectionGraph): VisualCable[] {
   }
 
   return visual;
+}
+
+/** Two-pass build: detect ring-cut splits, then apply split-aware row spacing. */
+export function buildVisualCablesForLayout(graph: ConnectionGraph): {
+  visualCables: VisualCable[];
+  dominant: DominantCablePair | null;
+} {
+  const pass1 = buildVisualCables(graph);
+  const dominant = findDominantCablePair(graph, pass1);
+  const visualCables = buildVisualCables(graph, pass1, dominant);
+  return { visualCables, dominant };
 }
 
 export function findVisualCableForConnection(

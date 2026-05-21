@@ -1,4 +1,7 @@
-import type { LayoutOverrides } from "@/types/splice";
+import {
+  LAYOUT_OVERRIDE_VERSION,
+  type LayoutOverrides,
+} from "@/types/splice";
 
 export function loadLayoutOverrides(
   reportKey: string,
@@ -6,7 +9,9 @@ export function loadLayoutOverrides(
   try {
     const raw = localStorage.getItem(reportKey);
     if (!raw) return undefined;
-    return JSON.parse(raw) as LayoutOverrides;
+    const parsed = JSON.parse(raw) as LayoutOverrides;
+    if (parsed.layoutVersion !== LAYOUT_OVERRIDE_VERSION) return undefined;
+    return parsed;
   } catch {
     return undefined;
   }
@@ -34,4 +39,18 @@ export function existingIdsFromEdges(
   edges: { id: string; data?: { existing?: boolean } }[],
 ): string[] {
   return edges.filter((e) => e.data?.existing).map((e) => e.id);
+}
+
+export function mergeLayoutOverrides(
+  reportKey: string,
+  patch: Partial<LayoutOverrides>,
+): LayoutOverrides {
+  const existing = loadLayoutOverrides(reportKey);
+  return {
+    reportKey,
+    layoutVersion: LAYOUT_OVERRIDE_VERSION,
+    positions: patch.positions ?? existing?.positions ?? {},
+    existingEdgeIds: patch.existingEdgeIds ?? existing?.existingEdgeIds,
+    cableSides: { ...existing?.cableSides, ...patch.cableSides },
+  };
 }

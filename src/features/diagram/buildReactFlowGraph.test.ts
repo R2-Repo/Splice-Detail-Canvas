@@ -57,6 +57,30 @@ describe("buildReactFlowGraph", () => {
     expect(edges.filter((e) => e.type === "splice")).toHaveLength(6);
   });
 
+  it("applies cableSides override to mirror dragged cables on reload", () => {
+    const csv = readFileSync(
+      join(examples, "CSV Splice Detail Example #2.csv"),
+      "utf8",
+    );
+    const graph = buildConnectionGraph(parseBentleyCsv(csv));
+    const base = buildReactFlowGraph(graph);
+    const leftDrop = base.nodes.find(
+      (n) =>
+        n.type === "cable" &&
+        (n.data as { side: string }).side === "left" &&
+        (n.data as { label: string }).label.includes("DROP"),
+    )!;
+    const visualId = leftDrop.id.replace(/^cable-/, "");
+
+    const { nodes } = buildReactFlowGraph(graph, {
+      reportKey: "test",
+      positions: {},
+      cableSides: { [visualId]: "right" },
+    });
+    const mirrored = nodes.find((n) => n.id === leftDrop.id)!;
+    expect((mirrored.data as { side: string }).side).toBe("right");
+  });
+
   it("Example #3: composite cables only, 28 splices", () => {
     const csv = readFileSync(
       join(examples, "CSV Splice Detail Example #3.csv"),

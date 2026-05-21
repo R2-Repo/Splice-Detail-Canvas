@@ -3,23 +3,24 @@ import type { Edge, Node } from "@xyflow/react";
 import { smfoLabelForCable } from "@/features/diagram/cableLabels";
 import { computeDiagramScale } from "@/features/diagram/cableBreakoutGeometry";
 import { computeCanvasPlacement } from "@/features/diagram/canvasPlacement";
+import { applyCableSideOverrides } from "@/features/diagram/cableDisplaySide";
 import {
   CABLE_LAYOUT,
   visualCableHeight,
 } from "@/features/diagram/cableLayoutMetrics";
 import { colorHex } from "@/features/diagram/colorCode";
+import { connectionRowIndexMap } from "@/features/diagram/connectionRowOrder";
 import {
   computeDiagramLayout,
   nodePositionsForGraph,
   type DiagramLayout,
 } from "@/features/diagram/layoutSpliceDiagram";
 import {
-  buildVisualCables,
+  buildVisualCablesForLayout,
   endpointOnVisualSide,
   type VisualCable,
 } from "@/features/diagram/visualCables";
 import { orderedFiberConnections } from "@/features/diagram/buildConnectionGraph";
-import { connectionRowIndexMap } from "@/features/diagram/connectionRowOrder";
 import type { ConnectionGraph, LayoutOverrides } from "@/types/splice";
 
 import type { CableNodeData } from "@/features/canvas/nodes/types";
@@ -42,8 +43,15 @@ export function buildReactFlowGraph(
   graph: ConnectionGraph,
   overrides?: LayoutOverrides,
 ): { nodes: Node[]; edges: Edge[]; layout: DiagramLayout } {
-  const visualCables = buildVisualCables(graph);
-  const placement = computeCanvasPlacement(graph, visualCables);
+  const { visualCables, dominant } = buildVisualCablesForLayout(graph);
+  const rowIndex = connectionRowIndexMap(graph, visualCables, dominant);
+  const placement = computeCanvasPlacement(
+    graph,
+    visualCables,
+    dominant,
+    rowIndex,
+  );
+  applyCableSideOverrides(placement, visualCables, overrides?.cableSides);
   applyPlacementToLegs(graph, visualCables, placement);
 
   for (const vc of visualCables) {
@@ -51,7 +59,12 @@ export function buildReactFlowGraph(
     if (p) vc.side = p.side;
   }
 
-  const layout = computeDiagramLayout(graph, visualCables, placement);
+  const layout = computeDiagramLayout(
+    graph,
+    visualCables,
+    placement,
+    dominant,
+  );
   const positions = nodePositionsForGraph(graph, layout, overrides);
   const nodes: Node[] = [];
   const edges: Edge[] = [];
@@ -79,7 +92,6 @@ export function buildReactFlowGraph(
     });
   }
 
-  const rowIndex = connectionRowIndexMap(graph);
   const laneCount = orderedFiberConnections(graph).length;
 
   for (const conn of orderedFiberConnections(graph)) {

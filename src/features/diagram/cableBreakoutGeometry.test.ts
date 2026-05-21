@@ -112,6 +112,19 @@ describe("computeCableBreakout", () => {
     expect(geo.tubes[0]!.end.y).not.toBeCloseTo(geo.tubes[1]!.end.y, 0);
   });
 
+  it("fans each strand from the tube tip to its row at the stem", () => {
+    const tubes = [
+      mockTube("BL", [
+        { rowIndex: 0, rowYOffset: 0, handleId: "f0", fiberColor: "BL" },
+        { rowIndex: 1, rowYOffset: 40, handleId: "f1", fiberColor: "OR" },
+      ]),
+    ];
+    const geo = computeCableBreakout(tubes, "left", 40, 56, 18);
+    const tube = geo.tubes[0]!;
+    expect(tube.fibers[0]!.fanFrom).toEqual(tube.end);
+    expect(tube.fibers[0]!.fanTo.y).not.toBe(tube.end.y);
+  });
+
   it("centers each tube endpoint on its fiber group", () => {
     const tubes = [
       mockTube("BL", [

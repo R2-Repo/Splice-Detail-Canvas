@@ -4,22 +4,29 @@
 
 ## Last updated
 
-2026-05-20 — Example #3 crossover row-order fix.
+2026-05-21 — Layout rules always-on for agents + `test:layout` gate.
 
 ## Done
 
-- **Bug:** RD/BK (CH 2101) on 24 DIST blue buffer tube rendered below orange tube
-- **Cause:** Row index followed Left CSV parse order; DK6↔24 DIST pairs at file end got rows 24–25
-- **Fix:** `connectionsInRowLayoutOrder()` sorts by through-cable fiber #; stub DK6/DK-6 pairs sort after through rows
-- **Files:** `connectionRowOrder.ts`, `throughCable.ts`, `visualCables.ts`, `spliceRowLayout.ts`, test in `connectionRowOrder.test.ts`
+- **`docs/agent/LAYOUT_RULES.md`** — 21 must-keep rule IDs for cables, tubes, fibers, rows, dominant pair, edges
+- **`src/features/diagram/layoutRules.ts`** — programmatic invariant checks (`checkLayoutRule`, `checkAllLayoutRules`)
+- **`src/features/diagram/layoutRules.test.ts`** — contract suite: every rule × Examples #1–#3 reference CSVs
+- **`.cursor/rules/layout-rules.mdc`** — agents must read rules + run tests on diagram/canvas changes
+- **`AGENTS.md`** updated to reference LAYOUT_RULES.md
+- **`layout-rules.mdc`** now `alwaysApply: true` — agents see rules every request
+- **`npm run test:layout`** + **`npm run verify`** — explicit layout contract gate
+
+## Maintenance protocol
+
+New layout feature → add rule ID in `LAYOUT_RULES.md` → implement check in `layoutRules.ts` → extend `layoutRules.test.ts` → `npm run test:ci`.
 
 ## Try it
 
 ```bash
+npm run test:layout   # required before finishing
+npm run verify        # full gate
 npm run dev
 ```
-
-Import Example #3 — RD/BK on 24 DIST BL tube should sit between WH and YL (not under OR).
 
 ## Next
 

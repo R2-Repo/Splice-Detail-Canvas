@@ -10,7 +10,9 @@
     "check": "tsc -b --noEmit",
     "lint": "eslint .",
     "test": "vitest",
-    "test:ci": "vitest run"
+    "test:layout": "vitest run src/features/diagram/layoutRules.test.ts",
+    "test:ci": "vitest run",
+    "verify": "npm run test:layout && npm run check && npm run test:ci && npm run build"
   },
   "dependencies": {
     "@xyflow/react": "^12.6.0",

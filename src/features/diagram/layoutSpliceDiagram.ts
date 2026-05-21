@@ -1,5 +1,6 @@
 import type { CablePlacement } from "@/features/diagram/canvasPlacement";
 import { CABLE_LAYOUT } from "@/features/diagram/cableLayoutMetrics";
+import type { DominantCablePair } from "@/features/diagram/dominantCablePair";
 import { computeAlignedLayout } from "@/features/diagram/spliceRowLayout";
 import type { VisualCable } from "@/features/diagram/visualCables";
 import type { ConnectionGraph, LayoutOverrides } from "@/types/splice";
@@ -32,8 +33,14 @@ export function computeDiagramLayout(
   graph: ConnectionGraph,
   visualCables: VisualCable[],
   placement: Map<string, CablePlacement>,
+  dominant?: DominantCablePair | null,
 ): DiagramLayout {
-  const aligned = computeAlignedLayout(graph, visualCables, placement);
+  const aligned = computeAlignedLayout(
+    graph,
+    visualCables,
+    placement,
+    dominant,
+  );
   return {
     reportKey: reportStorageKey(graph),
     rowYs: aligned.rowYs,

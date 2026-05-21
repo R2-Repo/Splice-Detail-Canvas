@@ -1,4 +1,9 @@
 import { cableLegIdForEndpoint } from "@/features/diagram/buildConnectionGraph";
+import type { DominantCablePair } from "@/features/diagram/dominantCablePair";
+import {
+  minRowIndexForVisualCable,
+  parentVisualGroupKey,
+} from "@/features/diagram/dominantCablePair";
 import type { VisualCable } from "@/features/diagram/visualCables";
 import type { CableLegId, ConnectionGraph } from "@/types/splice";
 
@@ -21,6 +26,8 @@ function cableSortRank(cable: string, side: "left" | "right"): number {
 export function computeCanvasPlacement(
   graph: ConnectionGraph,
   visualCables: VisualCable[],
+  dominant?: DominantCablePair | null,
+  rowIndex?: Map<string, number>,
 ): Map<string, CablePlacement> {
   const placement = new Map<string, CablePlacement>();
 
@@ -40,6 +47,12 @@ export function computeCanvasPlacement(
     bySide[side]
       .sort(
         (a, b) =>
+          dominantGroupRank(a, side, dominant) -
+            dominantGroupRank(b, side, dominant) ||
+          (rowIndex
+            ? minRowIndexForVisualCable(a, rowIndex) -
+              minRowIndexForVisualCable(b, rowIndex)
+            : 0) ||
           cableSortRank(a.cable, side) - cableSortRank(b.cable, side) ||
           a.cable.localeCompare(b.cable) ||
           a.order - b.order,
@@ -98,4 +111,18 @@ function bumpVote(
   const v = map.get(legId) ?? { left: 0, right: 0 };
   v[side] += 1;
   map.set(legId, v);
+}
+
+function dominantGroupRank(
+  vc: VisualCable,
+  side: "left" | "right",
+  dominant?: DominantCablePair | null,
+): number {
+  if (!dominant) return 0;
+  const group = parentVisualGroupKey(vc.id);
+  const isPrimary =
+    side === "left"
+      ? group === dominant.leftGroupKey
+      : group === dominant.rightGroupKey;
+  return isPrimary ? 0 : 1;
 }

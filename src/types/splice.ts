@@ -124,8 +124,14 @@ export type LayoutNodePosition = {
   y: number;
 };
 
+/** Bump when override shape/semantics change — ignores stale localStorage. */
+export const LAYOUT_OVERRIDE_VERSION = 4;
+
 export type LayoutOverrides = {
   reportKey: string;
+  layoutVersion?: number;
   positions: Record<string, { x: number; y: number }>;
   existingEdgeIds?: string[];
+  /** User-dragged display side per visual cable id (mirrors sheath/tubes/strands). */
+  cableSides?: Record<string, "left" | "right">;
 };
