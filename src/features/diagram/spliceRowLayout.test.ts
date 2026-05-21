@@ -9,10 +9,15 @@ import {
 import { buildConnectionGraph } from "./buildConnectionGraph";
 import { computeCanvasPlacement } from "./canvasPlacement";
 import { connectionRowIndexMap } from "./connectionRowOrder";
-import { computeAlignedLayout } from "./spliceRowLayout";
+import {
+  computeAlignedLayout,
+  computeCableXBounds,
+} from "./spliceRowLayout";
 import { buildVisualCablesForLayout } from "./visualCables";
 import { parseBentleyCsv } from "@/features/import/parseBentleyCsv";
 import type { ConnectionGraph } from "@/types/splice";
+import type { VisualCable } from "@/features/diagram/visualCables";
+import type { CablePlacement } from "@/features/diagram/canvasPlacement";
 
 const examples = join(process.cwd(), "docs/reference/examples");
 
@@ -39,6 +44,14 @@ function cableBoxesOverlap(
   b: { y: number; height: number },
 ): boolean {
   return a.y < b.y + b.height && b.y < a.y + a.height;
+}
+
+function placementFor(cables: VisualCable[]): Map<string, CablePlacement> {
+  const placement = new Map<string, CablePlacement>();
+  cables.forEach((vc, index) => {
+    placement.set(vc.id, { side: vc.side, order: index });
+  });
+  return placement;
 }
 
 describe("computeAlignedLayout", () => {
@@ -149,5 +162,37 @@ describe("computeAlignedLayout", () => {
       const offsets = vc.tubes.flatMap((t) => t.fibers.map((f) => f.rowYOffset));
       expect(new Set(offsets).size).toBe(offsets.length);
     }
+  });
+
+  it("expands cable spacing when a side fills with cables", () => {
+    const makeCable = (id: number, side: "left" | "right"): VisualCable => ({
+      id: `mock-${side}-${id}`,
+      legId: `${side}-${id}`,
+      device: "",
+      cable: `mock-${side}-${id}`,
+      side,
+      order: id,
+      tubes: [{ tubeColor: "BL", fibers: [] }],
+    });
+
+    const base = [makeCable(0, "left"), makeCable(0, "right")];
+    const leftHeavy = [
+      ...base,
+      ...Array.from({ length: 6 }, (_, index) => makeCable(index + 1, "left")),
+    ];
+    const rightHeavy = [
+      ...base,
+      ...Array.from({ length: 5 }, (_, index) => makeCable(index + 1, "right")),
+    ];
+
+    const baseBounds = computeCableXBounds(base, placementFor(base));
+    const leftBounds = computeCableXBounds(leftHeavy, placementFor(leftHeavy));
+    const rightBounds = computeCableXBounds(
+      rightHeavy,
+      placementFor(rightHeavy),
+    );
+
+    expect(leftBounds.leftX).toBeLessThanOrEqual(baseBounds.leftX);
+    expect(rightBounds.rightX).toBeGreaterThanOrEqual(baseBounds.rightX);
   });
 });

@@ -4,29 +4,29 @@
 
 ## Last updated
 
-2026-05-21 — Layout rules always-on for agents + `test:layout` gate.
+2026-05-21 — fiber strand direction synced to canvas position.
 
 ## Done
 
-- **`docs/agent/LAYOUT_RULES.md`** — 21 must-keep rule IDs for cables, tubes, fibers, rows, dominant pair, edges
-- **`src/features/diagram/layoutRules.ts`** — programmatic invariant checks (`checkLayoutRule`, `checkAllLayoutRules`)
-- **`src/features/diagram/layoutRules.test.ts`** — contract suite: every rule × Examples #1–#3 reference CSVs
-- **`.cursor/rules/layout-rules.mdc`** — agents must read rules + run tests on diagram/canvas changes
-- **`AGENTS.md`** updated to reference LAYOUT_RULES.md
-- **`layout-rules.mdc`** now `alwaysApply: true` — agents see rules every request
-- **`npm run test:layout`** + **`npm run verify`** — explicit layout contract gate
-
-## Maintenance protocol
-
-New layout feature → add rule ID in `LAYOUT_RULES.md` → implement check in `layoutRules.ts` → extend `layoutRules.test.ts` → `npm run test:ci`.
+- **`buildReactFlowGraph.ts`** — after layout + position overrides, `displaySideFromCanvasX` sets each cable's display side so breakout/handles point toward center
+- **`WorkflowCanvas.tsx`** — `onNodeDrag` flips a cable's display side while dragging so fiber strands and tubes reroute toward center immediately
+- **`buildReactFlowGraph.test.ts`** — saved position wins over stale `cableSides` override
+- **`cableBreakoutGeometry.test.ts`** — strands fan inward for left/right sides
+- **`spliceRowLayout.ts`** — `computeCableXBounds` expands left/right offsets when one side fills with cables and column Xs ignore tube count so nodes stay vertically aligned
+- **`spliceRowLayout.test.ts`** — validates spacing grows as a side fills with cables
+- Prior: cable-name-only import; one canvas node per physical cable; edge wiring fix
 
 ## Try it
 
 ```bash
 npm run test:layout   # required before finishing
-npm run verify        # full gate
+npm run verify
 npm run dev
 ```
+
+Import `docs/reference/examples/SP-I-15_11400S.csv` → **6** cable nodes (not 12).
+
+Examples #1–#3 unchanged (3 / 4 / 4 nodes). 300N_MAIN butt-splice collapse still works.
 
 ## Next
 
@@ -35,6 +35,7 @@ npm run dev
 
 ## Commands verified
 
+- `npm run test:layout`
 - `npm run check`
-- `npm run test:ci`
+- `npm run test:ci` (135 tests)
 - `npm run build`

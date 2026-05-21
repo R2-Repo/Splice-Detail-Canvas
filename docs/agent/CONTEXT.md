@@ -13,7 +13,7 @@
 
 **Canvas MVP rebuild** — composite cable nodes + placement for paired Examples #1–#3. Spec: [`splice-detail-canvas-project-summary.md`](../reference/examples/splice-detail-canvas-project-summary.md).
 
-**Working:** import CSV → composite cable nodes → splice edges with fusion dots; Example #1 = 3 cables / 4 edges; Example #2 = 4 cables / 6 edges.
+**Working:** import CSV → one canvas node per physical cable name; splice edges; Examples #1–#3 + 11400S + 300N_MAIN.
 
 **Still to polish:** PNG parity (typography), PDF export.
 
@@ -32,27 +32,31 @@ When adding layout behavior: update rules doc + checker + contract test in the s
 
 ## Recent layout (2026-05-21)
 
-- **Layout rules contract:** `LAYOUT_RULES.md`, `layoutRules.ts`, 52 contract tests on reference CSVs
-- **Edge routing init fix:** splice lane registry syncs on mount; fixes overlapping strands on Example #2 import
-- **Tube invariants:** strands top→bottom by TIA fiber #; 24px pitch within each buffer tube
-- **Dominant pair:** straight-across priority for largest left↔right cable group
-- **Ring-cut splits (Ex #1):** extra splice-row gap between split visual cables
-- Prior: through-cable row order; sheath/tube geometry parity
+- **Cable import simplification:** leg identity + canvas placement keyed by **cable name only** (remote Bentley `device` ignored); one visual node per physical cable; `computeCableCanvasSides` optimizes stack placement; edges/butt splices still use CSV From/To columns
+- **11400S fix:** 6 unique cable names → 6 canvas nodes (was 12)
+- **Fiber strand direction:** `buildReactFlowGraph` derives display side from node X (`displaySideFromCanvasX`) so strands always point toward diagram center (fixes stale `cableSides` vs saved position drift) and `WorkflowCanvas` watches drags so hybrid cables recalc fan direction instantly when crossing center
+- **Adaptive spacing + column alignment:** layout now widens left/right offsets via `computeCableXBounds` when a side fills and keeps every cable on the same column (`cableXForSide` ignores tube offsets) so tall imports (Example #3, 300N_MAIN, I-215) start aligned.
+- **300N_MAIN:** butt-splice detection matches tubes by CSV From/To role, not canvas side
+- Prior: 300N parse dedupe, TIA tube order, full butt splice collapse, layout rules contract
 
 ## Decisions
 
 | Topic | Choice | Notes |
 |-------|--------|-------|
 | CSV import | Direct interpret + internal normalize | No cleaned.csv rewrite |
+| Cable leg identity | **Cable name only** at splice | Remote `device` diagnostic only; `from`/`to` csvColumn for in/out legs |
+| Canvas placement | One node per cable name | Side from weighted pair optimization |
+| Edge routing | CSV From/To columns | Independent of canvas stack side |
 | Canvas | `@xyflow/react` | Frozen until parse gap = 0 on user files |
 | Architecture | Model-first | `tokenize → parse → normalize → SpliceReport` |
 | Layout regressions | Rules doc + contract tests | Must pass before merge |
-| Left/Right in CSV | Left = pairs; Right = leg hints | Right may be partial (Ex #1) |
+| Full butt splice | UI toggle, not auto on import | Layout always uses fiber-level rows; collapse is visual-only |
+| Left/Right in CSV | Left = primary pairs; Right = mirror + extras | Dedupe by physical fiber identity; Right-only rows kept |
 | New npm deps | User approval required | PDF lib TBD |
 
 ## Blockers
 
-_None for CSV on Examples #1–#2._ Need more CSV types for leg heuristics beyond mirror pattern.
+_None for CSV on Examples #1–#3 or 11400S._
 
 ## Out of scope (until requested)
 

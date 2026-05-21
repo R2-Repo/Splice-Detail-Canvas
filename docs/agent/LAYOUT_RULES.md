@@ -41,6 +41,7 @@ Do **not** weaken or delete a rule without explicit user approval.
 | **TUB-003** | Cable sheath preserves **aspect ratio** at all scales and tube counts. |
 | **TUB-004** | Multi-tube cables have **longer tube reach** than single-tube cables (stem extends further from sheath). |
 | **TUB-005** | Right-side cables **mirror** breakout geometry (sheath and tubes face inward toward splice center). |
+| **TUB-006** | Buffer tubes on each cable are ordered top→bottom: **BL…AQ**, then **BL-BK…AQ-BK** (TIA solid then striped). |
 
 ### Cable placement (`CBL`)
 

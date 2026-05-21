@@ -1,4 +1,4 @@
-import { isFiberColorAbbrev, parseTubeColorCode } from "@/features/diagram/colorCode";
+import { isFiberColorAbbrev, parseTubeColorCode, fiberNumberFromTubeAndColor } from "@/features/diagram/colorCode";
 import {
   cableNameKey,
   recordCableAppearance,
@@ -219,19 +219,34 @@ function parseToSide(
   };
 }
 
+function fillMissingFiberNumber(
+  ep: FiberEndpoint,
+  peer: FiberEndpoint,
+): FiberEndpoint {
+  if (Number.isFinite(ep.fiberNumber)) return ep;
+
+  if (ep.tubeColor === peer.tubeColor && Number.isFinite(peer.fiberNumber)) {
+    return { ...ep, fiberNumber: peer.fiberNumber };
+  }
+
+  const inferred = fiberNumberFromTubeAndColor(ep.tubeColor, ep.fiberColor);
+  if (Number.isFinite(inferred)) {
+    return { ...ep, fiberNumber: inferred };
+  }
+
+  if (Number.isFinite(peer.fiberNumber)) {
+    return { ...ep, fiberNumber: peer.fiberNumber };
+  }
+
+  return ep;
+}
+
 function normalizePairEndpoints(
   a: FiberEndpoint,
   b: FiberEndpoint,
 ): { endpointA: FiberEndpoint; endpointB: FiberEndpoint } | null {
-  let endpointA = { ...a };
-  let endpointB = { ...b };
-
-  if (!Number.isFinite(endpointA.fiberNumber) && Number.isFinite(endpointB.fiberNumber)) {
-    endpointA = { ...endpointA, fiberNumber: endpointB.fiberNumber };
-  }
-  if (!Number.isFinite(endpointB.fiberNumber) && Number.isFinite(endpointA.fiberNumber)) {
-    endpointB = { ...endpointB, fiberNumber: endpointA.fiberNumber };
-  }
+  let endpointA = fillMissingFiberNumber(a, b);
+  let endpointB = fillMissingFiberNumber(b, a);
   if (!Number.isFinite(endpointA.fiberNumber) || !Number.isFinite(endpointB.fiberNumber)) {
     return null;
   }
@@ -282,7 +297,7 @@ export function parseDataRowWithResult(
   }
 
   const { endpointA, endpointB } = normalized;
-  const id = pairKey(endpointA, endpointB);
+  const id = canonicalPairKey(endpointA, endpointB);
   const circuitName = extractCircuitName(rightParts);
   return toParseRowResult(
     { line, lineNumber, endpointA, endpointB },
@@ -321,20 +336,47 @@ export function endpointKey(ep: FiberEndpoint): string {
   ].join("|");
 }
 
+/** Physical fiber identity — ignores CSV column and remote device. */
+export function logicalEndpointKey(ep: FiberEndpoint): string {
+  return [
+    ep.cable,
+    String(ep.fiberNumber),
+    ep.tubeColor,
+    ep.fiberColor,
+  ].join("|");
+}
+
 export function pairKey(a: FiberEndpoint, b: FiberEndpoint): string {
   const keys = [endpointKey(a), endpointKey(b)].sort();
+  return keys.join("::");
+}
+
+export function canonicalPairKey(a: FiberEndpoint, b: FiberEndpoint): string {
+  const keys = [logicalEndpointKey(a), logicalEndpointKey(b)].sort();
   return keys.join("::");
 }
 
 function dedupePairs(pairs: SplicePair[]): SplicePair[] {
   const seen = new Map<string, SplicePair>();
   for (const pair of pairs) {
-    if (!seen.has(pair.id)) seen.set(pair.id, pair);
+    const key = canonicalPairKey(pair.endpointA, pair.endpointB);
+    if (!seen.has(key)) seen.set(key, pair);
   }
   return [...seen.values()];
 }
 
 export function parseLeftSectionRows(csvText: string): ParseRowResult[] {
+  return parseSectionRows(csvText, "left");
+}
+
+export function parseRightSectionRows(csvText: string): ParseRowResult[] {
+  return parseSectionRows(csvText, "right");
+}
+
+function parseSectionRows(
+  csvText: string,
+  target: "left" | "right",
+): ParseRowResult[] {
   const results: ParseRowResult[] = [];
   let section: "left" | "right" | null = null;
   let lineNumber = 0;
@@ -347,10 +389,13 @@ export function parseLeftSectionRows(csvText: string): ParseRowResult[] {
       section = "left";
       continue;
     }
-    if (line === "Right ---") break;
-    if (section !== "left" || !line.includes("<->")) continue;
+    if (line === "Right ---") {
+      section = "right";
+      continue;
+    }
+    if (section !== target || !line.includes("<->")) continue;
 
-    results.push(parseDataRowWithResult(line, lineNumber, "left"));
+    results.push(parseDataRowWithResult(line, lineNumber, target));
   }
 
   return results;
@@ -388,9 +433,12 @@ export function parseBentleyCsv(csvText: string): SpliceReport {
   const lines = csvText.split(/\r?\n/);
   const header = parseHeader(lines.slice(0, 12));
   const leftResults = parseLeftSectionRows(csvText);
+  const rightResults = parseRightSectionRows(csvText);
 
   const pairs = dedupePairs(
-    leftResults.filter((r): r is Extract<ParseRowResult, { ok: true }> => r.ok).map((r) => r.pair),
+    [...leftResults, ...rightResults]
+      .filter((r): r is Extract<ParseRowResult, { ok: true }> => r.ok)
+      .map((r) => r.pair),
   );
 
   const cableAppearances = scanCableAppearances(lines);
@@ -399,7 +447,7 @@ export function parseBentleyCsv(csvText: string): SpliceReport {
     header,
     pairs,
     cableAppearances: [...cableAppearances.values()],
-    leftRowResults: leftResults,
+    leftRowResults: [...leftResults, ...rightResults],
   };
 }
 

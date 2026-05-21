@@ -17,3 +17,11 @@ export function tubeNodeId(
 ): string {
   return `tube-${tubeEndpointKey(legId, tubeColor)}`;
 }
+
+/** React Flow handle id for a collapsed full-butt-splice buffer tube. */
+export function tubeHandleId(
+  legId: CableLegId,
+  tubeColor: TubeColorCode,
+): string {
+  return `tube-${tubeEndpointKey(legId, tubeColor)}`;
+}

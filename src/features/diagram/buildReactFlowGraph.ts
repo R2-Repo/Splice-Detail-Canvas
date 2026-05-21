@@ -3,7 +3,10 @@ import type { Edge, Node } from "@xyflow/react";
 import { smfoLabelForCable } from "@/features/diagram/cableLabels";
 import { computeDiagramScale } from "@/features/diagram/cableBreakoutGeometry";
 import { computeCanvasPlacement } from "@/features/diagram/canvasPlacement";
-import { applyCableSideOverrides } from "@/features/diagram/cableDisplaySide";
+import {
+  applyCableSideOverrides,
+  displaySideFromCanvasX,
+} from "@/features/diagram/cableDisplaySide";
 import {
   CABLE_LAYOUT,
   visualCableHeight,
@@ -11,17 +14,28 @@ import {
 import { colorHex } from "@/features/diagram/colorCode";
 import { connectionRowIndexMap } from "@/features/diagram/connectionRowOrder";
 import {
+  collapsedPairIdsFromButtSplices,
+  collapsedTubeColorsForVisualCable,
+  detectFullButtSpliceTubes,
+  resolveFullButtSpliceVisuals,
+} from "@/features/diagram/fullButtSplice";
+import {
   computeDiagramLayout,
   nodePositionsForGraph,
   type DiagramLayout,
 } from "@/features/diagram/layoutSpliceDiagram";
+import { tubeHandleId } from "@/features/diagram/tubeId";
 import {
   buildVisualCablesForLayout,
   endpointOnVisualSide,
   type VisualCable,
 } from "@/features/diagram/visualCables";
 import { orderedFiberConnections } from "@/features/diagram/buildConnectionGraph";
-import type { ConnectionGraph, LayoutOverrides } from "@/types/splice";
+import type {
+  ConnectionGraph,
+  FiberColorAbbrev,
+  LayoutOverrides,
+} from "@/types/splice";
 
 import type { CableNodeData } from "@/features/canvas/nodes/types";
 
@@ -43,6 +57,8 @@ export function buildReactFlowGraph(
   graph: ConnectionGraph,
   overrides?: LayoutOverrides,
 ): { nodes: Node[]; edges: Edge[]; layout: DiagramLayout } {
+  const collapseFullButtSplices = overrides?.collapseFullButtSplices ?? false;
+
   const { visualCables, dominant } = buildVisualCablesForLayout(graph);
   const rowIndex = connectionRowIndexMap(graph, visualCables, dominant);
   const placement = computeCanvasPlacement(
@@ -59,6 +75,16 @@ export function buildReactFlowGraph(
     if (p) vc.side = p.side;
   }
 
+  const detectedButtSplices = collapseFullButtSplices
+    ? detectFullButtSpliceTubes(graph, visualCables)
+    : [];
+  const resolvedButtSplices = collapseFullButtSplices
+    ? resolveFullButtSpliceVisuals(visualCables, detectedButtSplices)
+    : [];
+  const hiddenPairIds = collapseFullButtSplices
+    ? collapsedPairIdsFromButtSplices(resolvedButtSplices.map((r) => r.tube))
+    : new Set<string>();
+
   const layout = computeDiagramLayout(
     graph,
     visualCables,
@@ -66,6 +92,18 @@ export function buildReactFlowGraph(
     dominant,
   );
   const positions = nodePositionsForGraph(graph, layout, overrides);
+
+  for (const vc of visualCables) {
+    const pos = positions[`cable-${vc.id}`];
+    if (!pos) continue;
+    const displaySide = displaySideFromCanvasX(pos.x);
+    vc.side = displaySide;
+    const p = placement.get(vc.id);
+    if (p) {
+      placement.set(vc.id, { ...p, side: displaySide });
+    }
+  }
+
   const nodes: Node[] = [];
   const edges: Edge[] = [];
   const rowCount = orderedFiberConnections(graph).length;
@@ -74,6 +112,9 @@ export function buildReactFlowGraph(
   for (const vc of visualCables) {
     const nodeId = `cable-${vc.id}`;
     const pos = positions[nodeId] ?? { x: 0, y: 0 };
+    const collapsedTubes = collapseFullButtSplices
+      ? collapsedTubeColorsForVisualCable(vc, resolvedButtSplices)
+      : undefined;
     nodes.push({
       id: nodeId,
       type: "cable",
@@ -81,12 +122,14 @@ export function buildReactFlowGraph(
       data: {
         smfoLabel: smfoLabelForCable(vc.cable),
         label: vc.cable,
+        legId: vc.legId,
         side: vc.side,
         tubes: vc.tubes,
         nodeHeight: visualCableHeight(vc),
         fiberPitch: CABLE_LAYOUT.fiberRowH,
         diagramScale,
         spliceNumber: graph.report.header.spliceNumber,
+        collapsedTubes,
       } satisfies CableNodeData,
       draggable: true,
     });
@@ -95,21 +138,33 @@ export function buildReactFlowGraph(
   const laneCount = orderedFiberConnections(graph).length;
 
   for (const conn of orderedFiberConnections(graph)) {
-    const left = endpointOnVisualSide(conn, graph, visualCables, "left");
-    const right = endpointOnVisualSide(conn, graph, visualCables, "right");
-    if (!left || !right) continue;
+    if (hiddenPairIds.has(conn.id)) continue;
+
+    const csvLeft = endpointOnVisualSide(conn, graph, visualCables, "left");
+    const csvRight = endpointOnVisualSide(conn, graph, visualCables, "right");
+    if (!csvLeft || !csvRight) continue;
+
+    let source = csvLeft;
+    let target = csvRight;
+    if (
+      csvLeft.canvasSide === "right" &&
+      csvRight.canvasSide === "left"
+    ) {
+      source = csvRight;
+      target = csvLeft;
+    }
 
     const laneIndex = rowIndex.get(conn.id) ?? 0;
     edges.push({
       id: `splice-${conn.id}`,
-      source: `cable-${left.visualCableId}`,
-      target: `cable-${right.visualCableId}`,
-      sourceHandle: `${left.handleId}-out`,
-      targetHandle: `${right.handleId}-in`,
+      source: `cable-${source.visualCableId}`,
+      target: `cable-${target.visualCableId}`,
+      sourceHandle: `${source.handleId}-out`,
+      targetHandle: `${target.handleId}-in`,
       type: "splice",
       data: {
-        sourceColor: colorHex(left.endpoint.fiberColor),
-        targetColor: colorHex(right.endpoint.fiberColor),
+        sourceColor: colorHex(source.endpoint.fiberColor),
+        targetColor: colorHex(target.endpoint.fiberColor),
         existing: overrides?.existingEdgeIds?.includes(`splice-${conn.id}`),
         circuitName: conn.pair.circuitName,
         laneIndex,
@@ -118,25 +173,38 @@ export function buildReactFlowGraph(
     });
   }
 
-  for (const conn of graph.connections) {
-    if (conn.kind !== "tube") continue;
-    const leftVc = visualCables.find(
-      (v) => v.legId === conn.endpointA.legId && v.side === "left",
+  for (const {
+    tube,
+    leftVc,
+    rightVc,
+    leftEndpoint,
+    rightEndpoint,
+  } of resolvedButtSplices) {
+    const leftHandle = tubeHandleId(leftEndpoint.legId, leftEndpoint.tubeColor);
+    const rightHandle = tubeHandleId(
+      rightEndpoint.legId,
+      rightEndpoint.tubeColor,
     );
-    const rightVc = visualCables.find(
-      (v) => v.legId === conn.endpointB.legId && v.side === "right",
+    const leftBase = leftEndpoint.tubeColor.split("-")[0] as FiberColorAbbrev;
+    const rightBase = rightEndpoint.tubeColor.split("-")[0] as FiberColorAbbrev;
+    const laneIndex = Math.min(
+      ...tube.pairIds.map((id) => rowIndex.get(id) ?? 0),
     );
-    if (!leftVc || !rightVc) continue;
-    const base = conn.endpointA.tubeColor.split("-")[0] as import("@/types/splice").FiberColorAbbrev;
+
     edges.push({
-      id: `splice-${conn.id}`,
+      id: `butt-${tube.id}`,
       source: `cable-${leftVc.id}`,
       target: `cable-${rightVc.id}`,
-      sourceHandle: `${leftVc.tubes[0]?.fibers[0]?.handleId ?? "tube"}-out`,
-      targetHandle: `${rightVc.tubes[0]?.fibers[0]?.handleId ?? "tube"}-in`,
+      sourceHandle: `${leftHandle}-out`,
+      targetHandle: `${rightHandle}-in`,
       type: "splice",
-      style: { strokeWidth: 8 },
-      data: { color: colorHex(base) },
+      data: {
+        fullButtSplice: true,
+        sourceColor: colorHex(leftBase),
+        targetColor: colorHex(rightBase),
+        laneIndex,
+        laneCount,
+      },
     });
   }
 

@@ -216,6 +216,7 @@
   stroke-width: 3px !important;
 }
 
-.splice-edge__dot {
+.splice-edge__dot,
+.splice-edge__square {
   pointer-events: none;
 }

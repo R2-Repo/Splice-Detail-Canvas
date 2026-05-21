@@ -1,17 +1,19 @@
-import type { CsvColumnRole, FiberEndpoint } from "@/types/splice";
+import type { CsvColumnRole, FiberEndpoint, SplicePair } from "@/types/splice";
 
 export type SectionColumnCounts = { from: number; to: number };
 
 /** From/To appearance counts per cable in Left --- vs Right --- sections. */
 export type CableAppearanceSummary = {
+  /** Remote Bentley device — diagnostic only; not used for leg identity. */
   device: string;
   cable: string;
   left: SectionColumnCounts;
   right: SectionColumnCounts;
 };
 
-export function cableNameKey(device: string, cable: string): string {
-  return `${device}::${cable}`;
+/** Physical cable at this splice — Bentley name only (device ignored). */
+export function cableNameKey(cable: string): string {
+  return cable.trim();
 }
 
 const emptyCounts = (): SectionColumnCounts => ({ from: 0, to: 0 });
@@ -22,15 +24,96 @@ export function recordCableAppearance(
   column: CsvColumnRole,
   section: "left" | "right",
 ): void {
-  const key = cableNameKey(ep.device, ep.cable);
+  const key = cableNameKey(ep.cable);
   const entry = map.get(key) ?? {
-    device: ep.device,
+    device: "",
     cable: ep.cable,
     left: emptyCounts(),
     right: emptyCounts(),
   };
   entry[section][column] += 1;
   map.set(key, entry);
+}
+
+const MAX_EXHAUSTIVE_CABLES = 14;
+
+/**
+ * One canvas side per physical cable for node placement.
+ * Maximizes opposite-side pair weight; tie-breaks with From→left preference.
+ */
+export function computeCableCanvasSides(
+  pairs: SplicePair[],
+): Map<string, "left" | "right"> {
+  const counts = new Map<string, { from: number; to: number }>();
+  const pairWeight = new Map<string, number>();
+
+  for (const pair of pairs) {
+    for (const ep of [pair.endpointA, pair.endpointB]) {
+      const key = cableNameKey(ep.cable);
+      const tally = counts.get(key) ?? { from: 0, to: 0 };
+      tally[ep.csvColumn] += 1;
+      counts.set(key, tally);
+    }
+
+    const a = pair.endpointA.cable;
+    const b = pair.endpointB.cable;
+    if (a === b) continue;
+    const edgeKey = [a, b].sort().join("\0");
+    pairWeight.set(edgeKey, (pairWeight.get(edgeKey) ?? 0) + 1);
+  }
+
+  const cables = [...counts.keys()].sort((a, b) => a.localeCompare(b));
+
+  function preferredSide(cable: string): "left" | "right" {
+    const tally = counts.get(cableNameKey(cable)) ?? { from: 0, to: 0 };
+    return tally.from >= tally.to ? "left" : "right";
+  }
+
+  function oppositeWeight(sides: Map<string, "left" | "right">): number {
+    let score = 0;
+    for (const [edgeKey, weight] of pairWeight) {
+      const [a, b] = edgeKey.split("\0");
+      if (sides.get(a) !== sides.get(b)) score += weight;
+    }
+    return score;
+  }
+
+  function preferenceScore(sides: Map<string, "left" | "right">): number {
+    let score = 0;
+    for (const cable of cables) {
+      if (sides.get(cable) === preferredSide(cable)) score += 1;
+    }
+    return score;
+  }
+
+  if (cables.length === 0) return new Map();
+
+  if (cables.length <= MAX_EXHAUSTIVE_CABLES) {
+    let best = new Map<string, "left" | "right">();
+    let bestWeight = -1;
+    let bestPref = -1;
+
+    for (let mask = 0; mask < 1 << cables.length; mask++) {
+      const sides = new Map<string, "left" | "right">();
+      cables.forEach((cable, index) => {
+        sides.set(cable, (mask >> index) & 1 ? "right" : "left");
+      });
+      const weight = oppositeWeight(sides);
+      const pref = preferenceScore(sides);
+      if (weight > bestWeight || (weight === bestWeight && pref > bestPref)) {
+        bestWeight = weight;
+        bestPref = pref;
+        best = sides;
+      }
+    }
+    return best;
+  }
+
+  const sides = new Map<string, "left" | "right">();
+  for (const cable of cables) {
+    sides.set(cable, preferredSide(cable));
+  }
+  return sides;
 }
 
 /**

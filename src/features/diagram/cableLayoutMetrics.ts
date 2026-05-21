@@ -12,6 +12,9 @@ export const FIBER_ROW_PITCH = MIN_FIBER_LINE_GAP;
 /** Extra vertical gap when splice rows cross a buffer-tube boundary on the left leg. */
 export const TUBE_GROUP_GAP = 8;
 
+/** Standard fiber count in one buffer tube (TIA-598). */
+export const FIBERS_PER_BUFFER_TUBE = 12;
+
 /** Center spacing between adjacent vertical splice legs — same as row pitch. */
 export const SPLICE_LANE_SEP = MIN_FIBER_LINE_GAP;
 
@@ -21,8 +24,6 @@ export const CABLE_LAYOUT = {
   rightX: 1000,
   topY: 100,
   cableGap: 32,
-  /** Push multi-tube cables further from center — longer buffer-tube reach. */
-  tubeCountXOffset: 64,
   headerH: 56,
   tubeLabelH: 18,
   fiberRowH: FIBER_ROW_PITCH,
@@ -33,14 +34,19 @@ export const CABLE_LAYOUT = {
   spliceLaneSep: SPLICE_LANE_SEP,
 } as const;
 
+export type CableXBounds = {
+  leftX: number;
+  rightX: number;
+};
+
 export function cableXForSide(
   side: "left" | "right",
-  tubeCount: number,
+  _tubeCount: number,
+  bounds?: CableXBounds,
 ): number {
-  const offset = Math.max(0, tubeCount - 1) * CABLE_LAYOUT.tubeCountXOffset;
-  return side === "left"
-    ? CABLE_LAYOUT.leftX - offset
-    : CABLE_LAYOUT.rightX + offset;
+  const leftX = bounds?.leftX ?? CABLE_LAYOUT.leftX;
+  const rightX = bounds?.rightX ?? CABLE_LAYOUT.rightX;
+  return side === "left" ? leftX : rightX;
 }
 
 export function fiberRowY(rowIndex: number, baseTop = CABLE_LAYOUT.topY): number {

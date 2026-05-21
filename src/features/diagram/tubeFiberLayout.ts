@@ -1,4 +1,5 @@
 import { FIBER_ROW_PITCH } from "@/features/diagram/cableLayoutMetrics";
+import { compareTubeColorsTia } from "@/features/diagram/colorCode";
 import type { VisualCable } from "@/features/diagram/visualCables";
 
 /** TIA strand order within one buffer tube: top → bottom by fiber #, even 24px pitch. */
@@ -23,6 +24,23 @@ export function cableFiberTopToBottomOk(visualCables: VisualCable[]): boolean {
     const ordered = vc.tubes.flatMap((t) => t.fibers);
     for (let i = 1; i < ordered.length; i++) {
       if (ordered[i]!.rowYOffset <= ordered[i - 1]!.rowYOffset) return false;
+    }
+  }
+  return true;
+}
+
+/** Buffer tubes top→bottom follow TIA solid then striped order. */
+export function tubesInTiaOrderOk(visualCables: VisualCable[]): boolean {
+  for (const vc of visualCables) {
+    for (let i = 1; i < vc.tubes.length; i++) {
+      if (
+        compareTubeColorsTia(
+          vc.tubes[i - 1]!.tubeColor,
+          vc.tubes[i]!.tubeColor,
+        ) >= 0
+      ) {
+        return false;
+      }
     }
   }
   return true;

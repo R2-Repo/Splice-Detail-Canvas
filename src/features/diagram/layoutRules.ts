@@ -25,6 +25,7 @@ import { computeAlignedLayout, type AlignedDiagramLayout } from "@/features/diag
 import {
   cableFiberTopToBottomOk,
   compactTubeFiberLayoutOk,
+  tubesInTiaOrderOk,
 } from "@/features/diagram/tubeFiberLayout";
 import {
   buildVisualCables,
@@ -46,6 +47,7 @@ export const LAYOUT_RULE_IDS = [
   "TUB-003",
   "TUB-004",
   "TUB-005",
+  "TUB-006",
   "CBL-001",
   "CBL-002",
   "CBL-003",
@@ -78,6 +80,7 @@ export const LAYOUT_RULES: LayoutRuleMeta[] = [
   { id: "TUB-003", title: "Sheath preserves aspect ratio", category: "tube" },
   { id: "TUB-004", title: "Multi-tube cables have longer tube reach", category: "tube" },
   { id: "TUB-005", title: "Right-side breakout mirrors left", category: "tube" },
+  { id: "TUB-006", title: "Buffer tubes in TIA solid then striped order", category: "tube" },
   { id: "CBL-001", title: "Same-side cables do not overlap", category: "cable" },
   { id: "CBL-002", title: "Same-side cables stack with at least cableGap", category: "cable" },
   { id: "CBL-003", title: "Multi-tube cables offset X from center", category: "cable" },
@@ -429,6 +432,12 @@ export function checkLayoutRule(
         id,
         ok: rightSideMirrors(ctx.visualCables),
         detail: "Right-side breakout is not mirrored",
+      };
+    case "TUB-006":
+      return {
+        id,
+        ok: tubesInTiaOrderOk(ctx.visualCables),
+        detail: "Buffer tubes are not in TIA color order",
       };
     case "CBL-001":
       return {

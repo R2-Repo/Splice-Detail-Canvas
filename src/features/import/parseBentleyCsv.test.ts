@@ -32,4 +32,15 @@ describe("parseBentleyCsv", () => {
     expect(cables.has("6 DROP (TSC): 3300 S & 3175 E")).toBe(true);
     expect(cables.has("DIST 18. 3300 S 3175 E/3300 E")).toBe(true);
   });
+
+  it("infers fiber # from To tube+color when blank and tubes differ", () => {
+    const row =
+      "HUB2-8,11400S DIST,   1,BL,BL,<->,288 DIST I-15: MP 292.3 - 11400 S, ,BK,BL, ,";
+    const report = parseBentleyCsv(["Left ---", row].join("\n"));
+    expect(report.pairs).toHaveLength(1);
+    const to = report.pairs[0]!.endpointB;
+    expect(to.tubeColor).toBe("BK");
+    expect(to.fiberColor).toBe("BL");
+    expect(to.fiberNumber).toBe(85);
+  });
 });

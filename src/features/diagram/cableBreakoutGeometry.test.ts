@@ -176,13 +176,31 @@ describe("computeCableBreakout", () => {
     expect(right.sheath.x).toBeGreaterThan(left.sheath.x);
     expect(right.tubes[0]!.origin.x).toBeGreaterThan(left.tubes[0]!.origin.x);
   });
+
+  it("fans fiber strands toward the splice center", () => {
+    const tubes = [
+      mockTube("BL", [
+        { rowIndex: 0, rowYOffset: 0, handleId: "f0", fiberColor: "BL" },
+        { rowIndex: 1, rowYOffset: 40, handleId: "f1", fiberColor: "OR" },
+      ]),
+    ];
+    const left = computeCableBreakout(tubes, "left", 40, 56, 18);
+    for (const fiber of left.tubes[0]!.fibers) {
+      expect(fiber.fanTo.x).toBeGreaterThan(fiber.fanFrom.x);
+    }
+
+    const right = computeCableBreakout(tubes, "right", 40, 56, 18);
+    for (const fiber of right.tubes[0]!.fibers) {
+      expect(fiber.fanTo.x).toBeLessThan(fiber.fanFrom.x);
+    }
+  });
 });
 
 describe("cableXForSide", () => {
-  it("pushes multi-tube cables away from center", async () => {
+  it("returns the same column regardless of tube count", async () => {
     const { cableXForSide, CABLE_LAYOUT } = await import("./cableLayoutMetrics");
     expect(cableXForSide("left", 1)).toBe(CABLE_LAYOUT.leftX);
-    expect(cableXForSide("left", 3)).toBeLessThan(CABLE_LAYOUT.leftX);
-    expect(cableXForSide("right", 3)).toBeGreaterThan(CABLE_LAYOUT.rightX);
+    expect(cableXForSide("left", 3)).toBe(CABLE_LAYOUT.leftX);
+    expect(cableXForSide("right", 3)).toBe(CABLE_LAYOUT.rightX);
   });
 });

@@ -57,6 +57,34 @@ describe("buildReactFlowGraph", () => {
     expect(edges.filter((e) => e.type === "splice")).toHaveLength(6);
   });
 
+  it("display side follows saved position when cableSides override disagrees", () => {
+    const csv = readFileSync(
+      join(examples, "CSV Splice Detail Example #2.csv"),
+      "utf8",
+    );
+    const graph = buildConnectionGraph(parseBentleyCsv(csv));
+    const base = buildReactFlowGraph(graph);
+    const rightCable = base.nodes.find(
+      (n) =>
+        n.type === "cable" &&
+        (n.data as { side: string }).side === "right",
+    )!;
+    const visualId = rightCable.id.replace(/^cable-/, "");
+
+    const { nodes } = buildReactFlowGraph(graph, {
+      reportKey: "test",
+      positions: {
+        [rightCable.id]: {
+          x: rightCable.position.x,
+          y: rightCable.position.y,
+        },
+      },
+      cableSides: { [visualId]: "left" },
+    });
+    const restored = nodes.find((n) => n.id === rightCable.id)!;
+    expect((restored.data as { side: string }).side).toBe("right");
+  });
+
   it("applies cableSides override to mirror dragged cables on reload", () => {
     const csv = readFileSync(
       join(examples, "CSV Splice Detail Example #2.csv"),
@@ -91,5 +119,34 @@ describe("buildReactFlowGraph", () => {
 
     expect(nodes.every((n) => n.type === "cable")).toBe(true);
     expect(edges.filter((e) => e.type === "splice")).toHaveLength(28);
+  });
+
+  it("Example #2: collapse is a no-op without 12-fiber full tubes", () => {
+    const csv = readFileSync(
+      join(examples, "CSV Splice Detail Example #2.csv"),
+      "utf8",
+    );
+    const graph = buildConnectionGraph(parseBentleyCsv(csv));
+    const expanded = buildReactFlowGraph(graph);
+    const collapsed = buildReactFlowGraph(graph, {
+      reportKey: "test",
+      positions: {},
+      collapseFullButtSplices: true,
+    });
+
+    expect(expanded.edges.filter((e) => e.type === "splice")).toHaveLength(6);
+    expect(collapsed.edges.filter((e) => e.type === "splice")).toHaveLength(6);
+    expect(
+      collapsed.edges.some(
+        (e) => (e.data as { fullButtSplice?: boolean }).fullButtSplice,
+      ),
+    ).toBe(false);
+    expect(
+      collapsed.nodes.some(
+        (n) =>
+          ((n.data as { collapsedTubes?: string[] }).collapsedTubes?.length ??
+            0) > 0,
+      ),
+    ).toBe(false);
   });
 });

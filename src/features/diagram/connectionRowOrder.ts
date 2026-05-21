@@ -82,7 +82,7 @@ function layoutTubeKey(
 ): string {
   const { left, right } = pairEndpointsForSide(conn.pair, graph);
   const ep = canonicalLayoutEndpoint(left, right);
-  return `${ep.device}::${ep.cable}::${ep.tubeColor}`;
+  return `${ep.cable}::${ep.tubeColor}`;
 }
 
 function rowStepAfter(

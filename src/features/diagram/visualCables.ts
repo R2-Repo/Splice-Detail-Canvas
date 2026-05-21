@@ -7,6 +7,7 @@ import {
   FIBER_ROW_PITCH,
   TUBE_GROUP_GAP,
 } from "@/features/diagram/cableLayoutMetrics";
+import { compareTubeColorsTia } from "@/features/diagram/colorCode";
 import {
   connectionRowIndexMap,
   connectionRowOffsets,
@@ -16,7 +17,6 @@ import type { DominantCablePair } from "@/features/diagram/dominantCablePair";
 import { findDominantCablePair } from "@/features/diagram/dominantCablePair";
 import { isThroughCableName } from "@/features/diagram/throughCable";
 import type {
-  CableLeg,
   CableLegId,
   ConnectionGraph,
   FiberColorAbbrev,
@@ -65,27 +65,50 @@ type LegFiberRef = {
   rowYOffset: number;
 };
 
-function fibersOnLeg(
+function fibersForCable(
   graph: ConnectionGraph,
-  legId: CableLegId,
+  cable: string,
   rowIndex: Map<string, number>,
   rowOffsets: Map<string, number>,
 ): LegFiberRef[] {
   const refs: LegFiberRef[] = [];
   for (const conn of orderedFiberConnections(graph)) {
     for (const ep of [conn.pair.endpointA, conn.pair.endpointB]) {
-      if (cableLegIdForEndpoint(ep) !== legId) continue;
+      if (ep.cable !== cable) continue;
       refs.push({
         connectionId: conn.id,
         endpoint: ep,
         circuitName: conn.pair.circuitName,
-        legId,
+        legId: cableLegIdForEndpoint(ep),
         rowIndex: rowIndex.get(conn.id) ?? 0,
         rowYOffset: rowOffsets.get(conn.id) ?? 0,
       });
     }
   }
   return refs.sort((a, b) => a.rowIndex - b.rowIndex);
+}
+
+function primaryLegIdForCable(
+  graph: ConnectionGraph,
+  cable: string,
+): CableLegId {
+  const side = graph.cableSides.get(cable) ?? "left";
+  const column = side === "left" ? "from" : "to";
+  const preferred = graph.legs.find(
+    (leg) => leg.cable === cable && leg.csvColumn === column,
+  );
+  if (preferred) return preferred.id;
+  return graph.legs.find((leg) => leg.cable === cable)?.id ?? `${cable}::${column}`;
+}
+
+function uniqueCableNames(graph: ConnectionGraph): string[] {
+  const names = new Set<string>();
+  for (const leg of graph.legs) names.add(leg.cable);
+  for (const conn of orderedFiberConnections(graph)) {
+    names.add(conn.pair.endpointA.cable);
+    names.add(conn.pair.endpointB.cable);
+  }
+  return [...names].sort((a, b) => a.localeCompare(b));
 }
 
 function opposingLegIdsForFibers(
@@ -153,7 +176,7 @@ function buildTubes(fibers: LegFiberRef[]): VisualTube[] {
   const tubes: VisualTube[] = [];
 
   for (const [tubeColor, tubeFibers] of [...byTube.entries()].sort(([a], [b]) =>
-    a.localeCompare(b),
+    compareTubeColorsTia(a, b),
   )) {
     const sorted = [...tubeFibers].sort(
       (a, b) =>
@@ -188,8 +211,8 @@ function buildTubes(fibers: LegFiberRef[]): VisualTube[] {
   return tubes;
 }
 
-function groupKey(leg: CableLeg): string {
-  return `${leg.side}::${leg.cable}`;
+function groupKey(cable: string): string {
+  return cable;
 }
 
 export function buildVisualCables(
@@ -204,34 +227,21 @@ export function buildVisualCables(
     {
       side: "left" | "right";
       cable: string;
-      device: string;
       legId: CableLegId;
       fibers: LegFiberRef[];
     }
   >();
 
-  for (const leg of graph.legs) {
-    const fibers = fibersOnLeg(graph, leg.id, rowIndex, rowOffsets);
+  for (const cable of uniqueCableNames(graph)) {
+    const fibers = fibersForCable(graph, cable, rowIndex, rowOffsets);
     if (fibers.length === 0) continue;
 
-    const key = groupKey(leg);
-    const existing = groups.get(key);
-    if (existing) {
-      const seen = new Set(existing.fibers.map((f) => f.connectionId));
-      for (const f of fibers) {
-        if (seen.has(f.connectionId)) continue;
-        seen.add(f.connectionId);
-        existing.fibers.push(f);
-      }
-    } else {
-      groups.set(key, {
-        side: leg.side,
-        cable: leg.cable,
-        device: leg.device,
-        legId: leg.id,
-        fibers: [...fibers],
-      });
-    }
+    groups.set(groupKey(cable), {
+      side: graph.cableSides.get(cable) ?? "left",
+      cable,
+      legId: primaryLegIdForCable(graph, cable),
+      fibers,
+    });
   }
 
   const visual: VisualCable[] = [];
@@ -251,7 +261,7 @@ export function buildVisualCables(
       visual.push({
         id,
         legId: group.legId,
-        device: group.device,
+        device: "",
         cable: group.cable,
         side: group.side,
         order: baseOrder + instIdx * 0.01,
@@ -277,14 +287,28 @@ export function buildVisualCablesForLayout(graph: ConnectionGraph): {
 export function findVisualCableForConnection(
   visualCables: VisualCable[],
   connectionId: string,
+  options?: { cable?: string; canvasSide?: "left" | "right" },
+): VisualCable | undefined {
+  return visualCables.find((vc) => {
+    if (options?.cable && vc.cable !== options.cable) return false;
+    if (options?.canvasSide && vc.side !== options.canvasSide) return false;
+    return vc.tubes.some((t) =>
+      t.fibers.some((f) => f.connectionId === connectionId),
+    );
+  });
+}
+
+export function findVisualCableForTube(
+  visualCables: VisualCable[],
+  legId: CableLegId,
+  tubeColor: TubeColorCode,
   side: "left" | "right",
 ): VisualCable | undefined {
   return visualCables.find(
     (vc) =>
       vc.side === side &&
-      vc.tubes.some((t) =>
-        t.fibers.some((f) => f.connectionId === connectionId),
-      ),
+      vc.legId === legId &&
+      vc.tubes.some((t) => t.tubeColor === tubeColor),
   );
 }
 
@@ -293,10 +317,17 @@ export function endpointOnVisualSide(
   graph: ConnectionGraph,
   visualCables: VisualCable[],
   side: "left" | "right",
-): { visualCableId: string; handleId: string; endpoint: FiberEndpoint } | null {
+): {
+  visualCableId: string;
+  handleId: string;
+  endpoint: FiberEndpoint;
+  canvasSide: "left" | "right";
+} | null {
   const ends = pairEndpointsForSide(conn.pair, graph);
   const ep = side === "left" ? ends.left : ends.right;
-  const vc = findVisualCableForConnection(visualCables, conn.id, side);
+  const vc = findVisualCableForConnection(visualCables, conn.id, {
+    cable: ep.cable,
+  });
   if (!vc) return null;
   const fiber = vc.tubes
     .flatMap((t) => t.fibers)
@@ -306,5 +337,6 @@ export function endpointOnVisualSide(
     visualCableId: vc.id,
     handleId: fiber.handleId,
     endpoint: ep,
+    canvasSide: vc.side,
   };
 }

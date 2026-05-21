@@ -10,6 +10,7 @@ import { CABLE_LAYOUT } from "@/features/diagram/cableLayoutMetrics";
 import { computeCableBreakout } from "@/features/diagram/cableBreakoutGeometry";
 import { colorHex, colorName, isStripedTube } from "@/features/diagram/colorCode";
 import { formatCircuitTag } from "@/features/diagram/cableLabels";
+import { tubeHandleId } from "@/features/diagram/tubeId";
 import type { FiberColorAbbrev, TubeColorCode } from "@/types/splice";
 
 import type { CableNodeData } from "./types";
@@ -31,6 +32,7 @@ export function CableNode({ id, data }: NodeProps) {
   const pitch = d.fiberPitch ?? CABLE_LAYOUT.fiberRowH;
   const scale = d.diagramScale ?? 1;
   const updateNodeInternals = useUpdateNodeInternals();
+  const collapsedTubes = new Set(d.collapsedTubes ?? []);
 
   const geo = computeCableBreakout(
     d.tubes,
@@ -43,7 +45,15 @@ export function CableNode({ id, data }: NodeProps) {
 
   useEffect(() => {
     updateNodeInternals(id);
-  }, [id, d.side, d.tubes, geo.viewWidth, geo.viewHeight, updateNodeInternals]);
+  }, [
+    id,
+    d.side,
+    d.tubes,
+    d.collapsedTubes,
+    geo.viewWidth,
+    geo.viewHeight,
+    updateNodeInternals,
+  ]);
 
   const fiberByHandle = new Map(
     geo.tubes.flatMap((t) =>
@@ -58,6 +68,9 @@ export function CableNode({ id, data }: NodeProps) {
         a.fiber.fiberNumber - b.fiber.fiberNumber ||
         a.fiber.rowYOffset - b.fiber.rowYOffset,
     );
+
+  const isTubeCollapsed = (tubeColor: TubeColorCode): boolean =>
+    collapsedTubes.has(tubeColor);
 
   return (
     <div
@@ -96,54 +109,65 @@ export function CableNode({ id, data }: NodeProps) {
         aria-hidden
       >
         {geo.tubes.map((tube) => {
+          const collapsed = isTubeCollapsed(tube.tubeColor);
           const striped = isStripedTube(tube.tubeColor);
           const stroke = tubeStroke(tube.tubeColor, striped);
+          const lineEnd = collapsed
+            ? { x: geo.stemX, y: tube.end.y }
+            : tube.end;
           return (
             <g key={tube.tubeColor}>
               <line
                 x1={tube.origin.x}
                 y1={tube.origin.y}
-                x2={tube.end.x}
-                y2={tube.end.y}
+                x2={lineEnd.x}
+                y2={lineEnd.y}
                 stroke={stroke.stroke}
                 strokeWidth={8}
                 strokeLinecap="round"
                 strokeDasharray={stroke.strokeDasharray}
               />
-              {tube.fibers.map((fiber) => (
-                <line
-                  key={fiber.handleId}
-                  x1={fiber.fanFrom.x}
-                  y1={fiber.fanFrom.y}
-                  x2={fiber.fanTo.x}
-                  y2={fiber.fanTo.y}
-                  stroke={colorHex(fiber.fiberColor)}
-                  strokeWidth={3}
-                  strokeLinecap="round"
-                />
-              ))}
+              {!collapsed
+                ? tube.fibers.map((fiber) => (
+                    <line
+                      key={fiber.handleId}
+                      x1={fiber.fanFrom.x}
+                      y1={fiber.fanFrom.y}
+                      x2={fiber.fanTo.x}
+                      y2={fiber.fanTo.y}
+                      stroke={colorHex(fiber.fiberColor)}
+                      strokeWidth={3}
+                      strokeLinecap="round"
+                    />
+                  ))
+                : null}
             </g>
           );
         })}
       </svg>
 
-      {geo.tubes.map((tube) => (
-        <span
-          key={`label-${tube.tubeColor}`}
-          className="cable-node__tube-label"
-          style={{
-            top: tube.end.y - 8,
-            left: d.side === "left" ? tube.end.x + 4 : undefined,
-            right:
-              d.side === "right" ? geo.viewWidth - tube.end.x + 4 : undefined,
-          }}
-        >
-          {tube.tubeColor}
-        </span>
-      ))}
+      {geo.tubes.map((tube) => {
+        if (isTubeCollapsed(tube.tubeColor)) return null;
+        return (
+          <span
+            key={`label-${tube.tubeColor}`}
+            className="cable-node__tube-label"
+            style={{
+              top: tube.end.y - 8,
+              left: d.side === "left" ? tube.end.x + 4 : undefined,
+              right:
+                d.side === "right" ? geo.viewWidth - tube.end.x + 4 : undefined,
+            }}
+          >
+            {tube.tubeColor}
+          </span>
+        );
+      })}
 
       <div className="cable-node__fiber-rows">
-        {allFibers.map(({ fiber }) => {
+        {allFibers.map(({ tube, fiber }) => {
+          if (isTubeCollapsed(tube.tubeColor)) return null;
+
           const fg = fiberByHandle.get(fiber.handleId);
           const rowY = fg?.rowY ?? 0;
           const circuit = formatCircuitTag(
@@ -186,6 +210,36 @@ export function CableNode({ id, data }: NodeProps) {
               {circuit ? (
                 <span className="cable-node__circuit">{circuit}</span>
               ) : null}
+            </div>
+          );
+        })}
+
+        {geo.tubes.map((tube) => {
+          if (!isTubeCollapsed(tube.tubeColor)) return null;
+          const handleBase = tubeHandleId(d.legId, tube.tubeColor);
+          return (
+            <div
+              key={handleBase}
+              className="cable-node__fiber-row cable-node__fiber-row--tube"
+              style={{
+                top: tube.end.y,
+                left: d.side === "left" ? geo.stemX : undefined,
+                right:
+                  d.side === "right" ? geo.viewWidth - geo.stemX : undefined,
+              }}
+            >
+              <Handle
+                type="source"
+                position={handlePos}
+                id={`${handleBase}-out`}
+                className="cable-node__handle"
+              />
+              <Handle
+                type="target"
+                position={handlePos}
+                id={`${handleBase}-in`}
+                className="cable-node__handle"
+              />
             </div>
           );
         })}

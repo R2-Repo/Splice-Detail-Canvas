@@ -43,6 +43,16 @@ export function fiberNumberToColorIndex(fiberNumber: number): number {
   return ((fiberNumber - 1) % 12) + 1;
 }
 
+export function fiberNumberFromTubeAndColor(
+  tubeColor: TubeColorCode,
+  fiberColor: FiberColorAbbrev,
+): number {
+  const tubeIndex = TIA_TUBE_ORDER.indexOf(tubeColor);
+  const colorIndex = TIA_12_COLORS.findIndex((c) => c.abbrev === fiberColor);
+  if (tubeIndex === -1 || colorIndex === -1) return Number.NaN;
+  return tubeIndex * 12 + colorIndex + 1;
+}
+
 export function fiberNumberToAbbrev(fiberNumber: number): FiberColorAbbrev {
   return fiberColorFromIndex(fiberNumberToColorIndex(fiberNumber)).abbrev;
 }
@@ -59,6 +69,46 @@ export function parseTubeColorCode(raw: string): TubeColorCode | null {
 
 export function isStripedTube(code: TubeColorCode): boolean {
   return code.endsWith("-BK");
+}
+
+/** Solid TIA tubes 1–12, then striped tubes 13–24 (288-count). */
+export const TIA_TUBE_ORDER: readonly TubeColorCode[] = [
+  "BL",
+  "OR",
+  "GR",
+  "BR",
+  "SL",
+  "WH",
+  "RD",
+  "BK",
+  "YL",
+  "VI",
+  "RO",
+  "AQ",
+  "BL-BK",
+  "OR-BK",
+  "GR-BK",
+  "BR-BK",
+  "SL-BK",
+  "WH-BK",
+  "RD-BK",
+  "BK-BK",
+  "YL-BK",
+  "VI-BK",
+  "RO-BK",
+  "AQ-BK",
+] as const;
+
+export function compareTubeColorsTia(
+  a: TubeColorCode,
+  b: TubeColorCode,
+): number {
+  const ia = TIA_TUBE_ORDER.indexOf(a);
+  const ib = TIA_TUBE_ORDER.indexOf(b);
+  if (ia === -1 && ib === -1) return a.localeCompare(b);
+  if (ia === -1) return 1;
+  if (ib === -1) return -1;
+  return ia - ib;
 }
 
 export function tubeColorHex(code: TubeColorCode): string {

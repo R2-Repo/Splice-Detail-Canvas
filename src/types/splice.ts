@@ -116,6 +116,8 @@ export type ConnectionGraph = {
   report: SpliceReport;
   legs: CableLeg[];
   connections: DiagramConnection[];
+  /** One canvas side per physical cable name (from deduped pairs). */
+  cableSides: Map<string, "left" | "right">;
 };
 
 export type LayoutNodePosition = {
@@ -125,7 +127,7 @@ export type LayoutNodePosition = {
 };
 
 /** Bump when override shape/semantics change — ignores stale localStorage. */
-export const LAYOUT_OVERRIDE_VERSION = 4;
+export const LAYOUT_OVERRIDE_VERSION = 5;
 
 export type LayoutOverrides = {
   reportKey: string;
@@ -134,4 +136,6 @@ export type LayoutOverrides = {
   existingEdgeIds?: string[];
   /** User-dragged display side per visual cable id (mirrors sheath/tubes/strands). */
   cableSides?: Record<string, "left" | "right">;
+  /** Collapse full-butt-spliced buffer tubes (hide strands, show tube splice squares). */
+  collapseFullButtSplices?: boolean;
 };

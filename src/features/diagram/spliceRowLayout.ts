@@ -1,4 +1,5 @@
 import { connectionsInRowLayoutOrder } from "@/features/diagram/connectionRowOrder";
+import type { CableXBounds } from "@/features/diagram/cableLayoutMetrics";
 import {
   CABLE_LAYOUT,
   cableXForSide,
@@ -17,6 +18,33 @@ export type AlignedDiagramLayout = {
   rowYs: Map<string, number>;
   cablePositions: Map<string, { x: number; y: number; height: number }>;
 };
+
+const EXTRA_SPACING_PER_CABLE = 32;
+const MAX_EXTRA_SPACING = 640;
+
+function extraSpacingForCount(count: number): number {
+  const over = Math.max(0, count - 3);
+  return Math.min(MAX_EXTRA_SPACING, over * EXTRA_SPACING_PER_CABLE);
+}
+
+export function computeCableXBounds(
+  visualCables: VisualCable[],
+  placement: Map<string, CablePlacement>,
+): CableXBounds {
+  const centerX = CABLE_LAYOUT.width / 2;
+  const baseLeftSpacing = centerX - CABLE_LAYOUT.leftX;
+  const baseRightSpacing = CABLE_LAYOUT.rightX - centerX;
+  const sideOf = (vc: VisualCable) =>
+    placement.get(vc.id)?.side ?? vc.side;
+  const leftCount = visualCables.filter((vc) => sideOf(vc) === "left").length;
+  const rightCount = visualCables.filter((vc) => sideOf(vc) === "right")
+    .length;
+  const leftSpacing = baseLeftSpacing + extraSpacingForCount(leftCount);
+  const rightSpacing = baseRightSpacing + extraSpacingForCount(rightCount);
+  const leftX = Math.max(4, centerX - leftSpacing);
+  const rightX = Math.min(centerX * 2 - 4, centerX + rightSpacing);
+  return { leftX, rightX };
+}
 
 export function computeAlignedLayout(
   graph: ConnectionGraph,
@@ -52,6 +80,8 @@ export function computeAlignedLayout(
     .filter((vc) => sideOf(vc) === "right")
     .sort((a, b) => orderOf(a) - orderOf(b));
 
+  const xBounds = computeCableXBounds(visualCables, placement);
+
   const alignedNodeY = (vc: VisualCable): number => {
     let nodeY: number | undefined;
     for (const tube of vc.tubes) {
@@ -73,7 +103,7 @@ export function computeAlignedLayout(
     for (const vc of cables) {
       const nodeY = Math.max(alignedNodeY(vc), stackBottom);
       const h = visualCableHeight(vc);
-      const x = cableXForSide(side, vc.tubes.length);
+      const x = cableXForSide(side, vc.tubes.length, xBounds);
       cablePositions.set(vc.id, { x, y: nodeY, height: h });
       stackBottom = nodeY + h + CABLE_LAYOUT.cableGap;
     }
