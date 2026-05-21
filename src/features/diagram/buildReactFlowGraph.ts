@@ -1,6 +1,7 @@
 import type { Edge, Node } from "@xyflow/react";
 
 import { smfoLabelForCable } from "@/features/diagram/cableLabels";
+import { computeDiagramScale } from "@/features/diagram/cableBreakoutGeometry";
 import { computeCanvasPlacement } from "@/features/diagram/canvasPlacement";
 import {
   CABLE_LAYOUT,
@@ -54,6 +55,8 @@ export function buildReactFlowGraph(
   const positions = nodePositionsForGraph(graph, layout, overrides);
   const nodes: Node[] = [];
   const edges: Edge[] = [];
+  const rowCount = orderedFiberConnections(graph).length;
+  const diagramScale = computeDiagramScale(rowCount);
 
   for (const vc of visualCables) {
     const nodeId = `cable-${vc.id}`;
@@ -69,10 +72,10 @@ export function buildReactFlowGraph(
         tubes: vc.tubes,
         nodeHeight: visualCableHeight(vc),
         fiberPitch: CABLE_LAYOUT.fiberRowH,
+        diagramScale,
         spliceNumber: graph.report.header.spliceNumber,
       } satisfies CableNodeData,
       draggable: true,
-      style: { width: 220 },
     });
   }
 
@@ -84,7 +87,6 @@ export function buildReactFlowGraph(
     const right = endpointOnVisualSide(conn, graph, visualCables, "right");
     if (!left || !right) continue;
 
-    const color = colorHex(left.endpoint.fiberColor);
     const laneIndex = rowIndex.get(conn.id) ?? 0;
     edges.push({
       id: `splice-${conn.id}`,
@@ -94,7 +96,8 @@ export function buildReactFlowGraph(
       targetHandle: `${right.handleId}-in`,
       type: "splice",
       data: {
-        color,
+        sourceColor: colorHex(left.endpoint.fiberColor),
+        targetColor: colorHex(right.endpoint.fiberColor),
         existing: overrides?.existingEdgeIds?.includes(`splice-${conn.id}`),
         circuitName: conn.pair.circuitName,
         laneIndex,

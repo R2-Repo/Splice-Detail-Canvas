@@ -15,13 +15,19 @@
 
 **Working:** import CSV → composite cable nodes → splice edges with fusion dots; Example #1 = 3 cables / 4 edges; Example #2 = 4 cables / 6 edges.
 
-**Still to polish:** PNG parity (labels, dashed existing lines UI), Example #3 dense crossover layout.
+**Still to polish:** PNG parity (typography), PDF export.
 
 ## Active goals (next)
 
-- Dashed “protect in place” toggle on selected splice
-- Finer layout scoring vs reference PNGs
+- Finer layout scoring vs reference PNGs (typography)
 - PDF export (needs dep approval)
+
+## Recent layout (2026-05-20)
+
+- **Row order:** through-cable fiber # (not CSV tail order) — fixes Ex #3 RD/BK CH 2101 sitting below OR tube
+- Cable sheath height scales with buffer-tube vertical span + tube count
+- Multi-tube cables pushed further outward (64px/tube) for longer buffer-tube reach
+- Buffer tube endpoints vertically centered on their fiber groups (Ex #3 parity)
 
 ## Decisions
 

@@ -35,6 +35,14 @@ describe("buildReactFlowGraph", () => {
 
     const laneData = edges.map((e) => e.data as { laneIndex: number });
     expect(new Set(laneData.map((d) => d.laneIndex)).size).toBe(4);
+
+    const first = edges[0]!.data as {
+      sourceColor: string;
+      targetColor: string;
+    };
+    expect(first.sourceColor).toBeTruthy();
+    expect(first.targetColor).toBeTruthy();
+    expect(first.sourceColor).not.toBe(first.targetColor);
   });
 
   it("Example #2: four cable nodes, six splice edges", () => {

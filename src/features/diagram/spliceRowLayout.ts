@@ -1,13 +1,12 @@
-import {
-  pairEndpointsForSide,
-  orderedFiberConnections,
-} from "@/features/diagram/buildConnectionGraph";
+import { connectionsInRowLayoutOrder } from "@/features/diagram/connectionRowOrder";
 import {
   CABLE_LAYOUT,
+  cableXForSide,
   fiberRowOffsetInCable,
-  fiberRowY,
+  fiberRowYFromOffset,
   visualCableHeight,
 } from "@/features/diagram/cableLayoutMetrics";
+import { connectionRowOffsets } from "@/features/diagram/connectionRowOrder";
 import type { CablePlacement } from "@/features/diagram/canvasPlacement";
 import type { VisualCable } from "@/features/diagram/visualCables";
 import type { ConnectionGraph } from "@/types/splice";
@@ -17,17 +16,6 @@ export type AlignedDiagramLayout = {
   rowYs: Map<string, number>;
   cablePositions: Map<string, { x: number; y: number; height: number }>;
 };
-
-function sortConnections(graph: ConnectionGraph) {
-  return [...orderedFiberConnections(graph)].sort((a, b) => {
-    const aEnds = pairEndpointsForSide(a.pair, graph);
-    const bEnds = pairEndpointsForSide(b.pair, graph);
-    return (
-      aEnds.left.fiberNumber - bEnds.left.fiberNumber ||
-      aEnds.left.fiberColor.localeCompare(bEnds.left.fiberColor)
-    );
-  });
-}
 
 export function computeAlignedLayout(
   graph: ConnectionGraph,
@@ -40,11 +28,15 @@ export function computeAlignedLayout(
     { x: number; y: number; height: number }
   >();
 
-  const sorted = sortConnections(graph);
+  const sorted = connectionsInRowLayoutOrder(graph);
+  const rowOffsets = connectionRowOffsets(graph);
 
-  sorted.forEach((conn, index) => {
-    rowYs.set(conn.id, fiberRowY(index));
-  });
+  for (const conn of sorted) {
+    rowYs.set(
+      conn.id,
+      fiberRowYFromOffset(rowOffsets.get(conn.id) ?? 0),
+    );
+  }
 
   const sideOf = (vc: VisualCable) =>
     placement.get(vc.id)?.side ?? vc.side;
@@ -58,7 +50,7 @@ export function computeAlignedLayout(
     .filter((vc) => sideOf(vc) === "right")
     .sort((a, b) => orderOf(a) - orderOf(b));
 
-  const placeSide = (cables: VisualCable[], x: number) => {
+  const placeSide = (cables: VisualCable[], side: "left" | "right") => {
     for (const vc of cables) {
       let nodeY: number = CABLE_LAYOUT.topY;
       for (const tube of vc.tubes) {
@@ -70,12 +62,13 @@ export function computeAlignedLayout(
         }
       }
       const h = visualCableHeight(vc);
+      const x = cableXForSide(side, vc.tubes.length);
       cablePositions.set(vc.id, { x, y: nodeY, height: h });
     }
   };
 
-  placeSide(leftCables, CABLE_LAYOUT.leftX);
-  placeSide(rightCables, CABLE_LAYOUT.rightX);
+  placeSide(leftCables, "left");
+  placeSide(rightCables, "right");
 
   return {
     reportKey: "",

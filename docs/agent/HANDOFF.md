@@ -4,17 +4,14 @@
 
 ## Last updated
 
-2026-05-20 — Restored Example #1 ring-cut split (3 cable nodes).
+2026-05-20 — Example #3 crossover row-order fix.
 
 ## Done
 
-- **Example #1 regression:** re-enabled `buildVisualCables` split for through 144 vs one drop leg → 1 drop + **2× 144** right (not one merged 144); equal 40px row/lane spacing kept
-- **Aligned splice rows:** each connection shares one horizontal Y on left and right (fixes crossover/straight routing)
-- **Cable placement:** Example #2 order (drop top-left, dist 2700 bottom-left, dist 3175 top-right, DK-6 bottom-right)
-- **Protect-in-place:** click any splice edge to toggle dashed gray line (no fusion dot); saved in `localStorage`
-- **Labels:** `006 SMFO (R2)` + cable name; circuit `(CH 2090)` on fiber rows
-- **Handles:** per fiber row (fixes misaligned edges)
-- **Wider canvas** (1400px layout width)
+- **Bug:** RD/BK (CH 2101) on 24 DIST blue buffer tube rendered below orange tube
+- **Cause:** Row index followed Left CSV parse order; DK6↔24 DIST pairs at file end got rows 24–25
+- **Fix:** `connectionsInRowLayoutOrder()` sorts by through-cable fiber #; stub DK6/DK-6 pairs sort after through rows
+- **Files:** `connectionRowOrder.ts`, `throughCable.ts`, `visualCables.ts`, `spliceRowLayout.ts`, test in `connectionRowOrder.test.ts`
 
 ## Try it
 
@@ -22,12 +19,11 @@
 npm run dev
 ```
 
-Import `CSV Splice Detail Example #2.csv` — click splice lines to mark existing/protect-in-place.
+Import Example #3 — RD/BK on 24 DIST BL tube should sit between WH and YL (not under OR).
 
 ## Next
 
-- Match PNG typography/spacing exactly
-- Example #3 dense crossover tuning
+- Match PNG typography exactly
 - PDF export (needs dep approval)
 
 ## Commands verified

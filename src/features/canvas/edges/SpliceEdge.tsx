@@ -1,17 +1,16 @@
-import {
-  BaseEdge,
-  getSmoothStepPath,
-  type EdgeProps,
-} from "@xyflow/react";
+import { BaseEdge, type EdgeProps } from "@xyflow/react";
 
 import {
-  FIBER_ROW_PITCH,
-  MIN_FIBER_LINE_GAP,
-  SPLICE_LANE_SEP,
-} from "@/features/diagram/cableLayoutMetrics";
+  buildDemarcatedSplicePaths,
+  spliceMidX,
+  useRoutingLaneIndex,
+} from "@/features/canvas/edges/spliceEdgeRouting";
 
 type SpliceEdgeData = {
+  /** @deprecated use sourceColor */
   color?: string;
+  sourceColor?: string;
+  targetColor?: string;
   existing?: boolean;
   laneIndex?: number;
   laneCount?: number;
@@ -23,55 +22,63 @@ export function SpliceEdge({
   sourceY,
   targetX,
   targetY,
-  sourcePosition,
-  targetPosition,
   data,
 }: EdgeProps) {
   const d = (data ?? {}) as SpliceEdgeData;
+  const fallbackLane = d.laneIndex ?? 0;
   const laneCount = Math.max(1, d.laneCount ?? 1);
-  const laneIndex = d.laneIndex ?? 0;
-  const laneOffset =
-    (laneIndex - (laneCount - 1) / 2) * SPLICE_LANE_SEP;
+  const useDynamicLanes = laneCount > 1;
 
-  const verticalSpan = Math.abs(targetY - sourceY);
-  const offset =
-    verticalSpan > MIN_FIBER_LINE_GAP
-      ? Math.min(verticalSpan * 0.4, 200)
-      : FIBER_ROW_PITCH / 2;
+  const { routingLane, activeLaneCount } = useRoutingLaneIndex(
+    id,
+    sourceY,
+    targetY,
+    fallbackLane,
+    useDynamicLanes,
+    laneCount,
+  );
 
-  const centerX = (sourceX + targetX) / 2 + laneOffset;
+  const midX = spliceMidX(
+    sourceX,
+    targetX,
+    routingLane,
+    useDynamicLanes ? activeLaneCount : laneCount,
+  );
 
-  const [path, labelX, labelY] = getSmoothStepPath({
+  const { leftPath, rightPath, spliceX, spliceY } = buildDemarcatedSplicePaths(
     sourceX,
     sourceY,
     targetX,
     targetY,
-    sourcePosition,
-    targetPosition,
-    borderRadius: 0,
-    offset,
-    centerX,
-  });
+    midX,
+  );
 
-  const stroke = d.existing ? "#94a3b8" : (d.color ?? "#e2e8f0");
+  const fallback = d.color ?? "#e2e8f0";
+  const sourceStroke = d.existing ? "#94a3b8" : (d.sourceColor ?? fallback);
+  const targetStroke = d.existing ? "#94a3b8" : (d.targetColor ?? fallback);
   const dash = d.existing ? "8 5" : undefined;
+  const edgeStyle = {
+    strokeWidth: d.existing ? 1.5 : 2.5,
+    strokeDasharray: dash,
+    opacity: d.existing ? 0.85 : 1,
+  };
 
   return (
     <>
       <BaseEdge
-        id={id}
-        path={path}
-        style={{
-          stroke,
-          strokeWidth: d.existing ? 1.5 : 2.5,
-          strokeDasharray: dash,
-          opacity: d.existing ? 0.85 : 1,
-        }}
+        id={`${id}-left`}
+        path={leftPath}
+        style={{ ...edgeStyle, stroke: sourceStroke }}
+      />
+      <BaseEdge
+        id={`${id}-right`}
+        path={rightPath}
+        style={{ ...edgeStyle, stroke: targetStroke }}
       />
       {!d.existing ? (
         <circle
-          cx={labelX}
-          cy={labelY}
+          cx={spliceX}
+          cy={spliceY}
           r={4}
           fill="#000"
           className="splice-edge__dot"

@@ -9,6 +9,8 @@ export type CableNodeData = {
   nodeHeight: number;
   /** Center-to-center spacing between fiber rows (px). */
   fiberPitch: number;
+  /** Diagram scale factor for sheath/tube sizing. */
+  diagramScale?: number;
   spliceNumber?: string;
 };
 

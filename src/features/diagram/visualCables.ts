@@ -3,7 +3,11 @@ import {
   orderedFiberConnections,
   pairEndpointsForSide,
 } from "@/features/diagram/buildConnectionGraph";
-import { connectionRowIndexMap } from "@/features/diagram/connectionRowOrder";
+import {
+  connectionRowIndexMap,
+  connectionRowOffsets,
+} from "@/features/diagram/connectionRowOrder";
+import { isThroughCableName } from "@/features/diagram/throughCable";
 import type {
   CableLeg,
   CableLegId,
@@ -21,8 +25,10 @@ export type VisualFiber = {
   tubeColor: TubeColorCode;
   circuitName?: string;
   handleId: string;
-  /** Global splice row (0-based) — fixed spacing in layout. */
+  /** Global splice row (0-based) — ordering only. */
   rowIndex: number;
+  /** Cumulative vertical offset (px) including buffer-tube group gaps. */
+  rowYOffset: number;
 };
 
 export type VisualTube = {
@@ -46,12 +52,14 @@ type LegFiberRef = {
   circuitName?: string;
   legId: CableLegId;
   rowIndex: number;
+  rowYOffset: number;
 };
 
 function fibersOnLeg(
   graph: ConnectionGraph,
   legId: CableLegId,
   rowIndex: Map<string, number>,
+  rowOffsets: Map<string, number>,
 ): LegFiberRef[] {
   const refs: LegFiberRef[] = [];
   for (const conn of orderedFiberConnections(graph)) {
@@ -63,15 +71,11 @@ function fibersOnLeg(
         circuitName: conn.pair.circuitName,
         legId,
         rowIndex: rowIndex.get(conn.id) ?? 0,
+        rowYOffset: rowOffsets.get(conn.id) ?? 0,
       });
     }
   }
   return refs.sort((a, b) => a.rowIndex - b.rowIndex);
-}
-
-function isThroughCableName(cable: string): boolean {
-  if (/DROP|DK-/i.test(cable)) return false;
-  return /\b(144|288|96|48|24)\b/.test(cable);
 }
 
 function opposingLegIdsForFibers(
@@ -125,6 +129,7 @@ function buildTubes(fibers: LegFiberRef[]): VisualTube[] {
       circuitName: f.circuitName,
       handleId: `fiber-${f.connectionId}`,
       rowIndex: f.rowIndex,
+      rowYOffset: f.rowYOffset,
     });
     byTube.set(f.endpoint.tubeColor, list);
   }
@@ -142,6 +147,7 @@ function groupKey(leg: CableLeg): string {
 
 export function buildVisualCables(graph: ConnectionGraph): VisualCable[] {
   const rowIndex = connectionRowIndexMap(graph);
+  const rowOffsets = connectionRowOffsets(graph);
   const groups = new Map<
     string,
     {
@@ -154,7 +160,7 @@ export function buildVisualCables(graph: ConnectionGraph): VisualCable[] {
   >();
 
   for (const leg of graph.legs) {
-    const fibers = fibersOnLeg(graph, leg.id, rowIndex);
+    const fibers = fibersOnLeg(graph, leg.id, rowIndex, rowOffsets);
     if (fibers.length === 0) continue;
 
     const key = groupKey(leg);
