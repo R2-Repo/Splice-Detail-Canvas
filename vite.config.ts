@@ -3,7 +3,13 @@ import { fileURLToPath, URL } from "node:url";
 import { defineConfig } from "vite";
 import { VitePWA } from "vite-plugin-pwa";
 
+const ghRepoName =
+  process.env.GITHUB_REPOSITORY?.split("/")?.[1] ?? "Splice-Detail-Canvas";
+const isGitHubPagesBuild = process.env.GITHUB_PAGES === "true";
+const base = isGitHubPagesBuild ? `/${ghRepoName}/` : "/";
+
 export default defineConfig({
+  base,
   plugins: [
     react(),
     VitePWA({

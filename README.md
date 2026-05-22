@@ -51,3 +51,9 @@ Add screenshots, specs, and sample files under [`docs/reference/`](./docs/refere
 ## Vision
 
 Agent-maintained context files, minimal token chatter, and production-ready features — see original goals in git history or ask the agent to **expand** `docs/agent/CONTEXT.md`.
+
+## GitHub Pages
+
+- `vite.config.ts` now reads `GITHUB_PAGES=true` builds and sets the base path to `/Splice-Detail-Canvas/` so asset URLs resolve when the app is hosted on `https://<org>.github.io/Splice-Detail-Canvas/`. Change the default repo name there if your GitHub repo differs.
+- Pushes to `main` trigger `.github/workflows/deploy-github-pages.yml`, which runs `npm run build` with the same env flag and publishes `dist/` to the `gh-pages` branch via `peaceiris/actions-gh-pages@v4`.
+- Enable GitHub Pages in your repository settings to serve the `gh-pages` branch at `/` (root). Once enabled, every push to `main` updates the live site automatically.

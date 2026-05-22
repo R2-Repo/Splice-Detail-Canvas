@@ -53,6 +53,7 @@ When adding layout behavior: update rules doc + checker + contract test in the s
 | Full butt splice | UI toggle, not auto on import | Layout always uses fiber-level rows; collapse is visual-only |
 | Left/Right in CSV | Left = primary pairs; Right = mirror + extras | Dedupe by physical fiber identity; Right-only rows kept |
 | New npm deps | User approval required | PDF lib TBD |
+| Hosting | GitHub Pages via action | Build workflow sets `GITHUB_PAGES=true` so Vite uses `/<repo>/` base and `peaceiris/actions-gh-pages` publishes `dist/` to the `gh-pages` branch on every `main` push. |
 
 ## Blockers
 

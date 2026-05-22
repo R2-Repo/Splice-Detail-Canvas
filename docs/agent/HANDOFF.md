@@ -14,6 +14,7 @@
 - **`cableBreakoutGeometry.test.ts`** — strands fan inward for left/right sides
 - **`spliceRowLayout.ts`** — `computeCableXBounds` expands left/right offsets when one side fills with cables and column Xs ignore tube count so nodes stay vertically aligned
 - **`spliceRowLayout.test.ts`** — validates spacing grows as a side fills with cables
+- **GitHub Pages deployment** — new `deploy-github-pages.yml`, Vite base toggle, and README instructions so `main` pushes publish `dist/` to the `gh-pages` branch automatically.
 - Prior: cable-name-only import; one canvas node per physical cable; edge wiring fix
 
 ## Try it
