@@ -32,7 +32,11 @@ export function computeCableXBounds(
   placement: Map<string, CablePlacement>,
   layoutWidth: number = CABLE_LAYOUT.width,
 ): CableXBounds {
-  const width = Math.max(layoutWidth, CABLE_LAYOUT.width);
+  const widthBias = Math.max(0, visualCables.length - 2) * 120;
+  const width = Math.max(
+    layoutWidth,
+    CABLE_LAYOUT.width + widthBias,
+  );
   const centerX = width / 2;
   const baseCenter = CABLE_LAYOUT.width / 2;
   const baseLeftSpacing = baseCenter - CABLE_LAYOUT.leftX;
