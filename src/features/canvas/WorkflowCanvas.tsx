@@ -13,7 +13,7 @@ import {
   type OnNodeDrag,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import { useCallback, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 
 import { spliceEdgeTypes } from "@/features/canvas/edgeTypes";
 import {
@@ -75,6 +75,8 @@ function WorkflowCanvasInner() {
     return () => observer.disconnect();
   }, []);
 
+  const layoutWidthRef = useRef<number>(CABLE_LAYOUT.width);
+
   type ApplyGraphOptions = {
     fitView?: boolean;
     cableSidesPatch?: Record<string, "left" | "right">;
@@ -121,6 +123,19 @@ function WorkflowCanvasInner() {
     },
     [setNodes, setEdges, fitView, layoutWidth, updateNodeInternals],
   );
+
+  useEffect(() => {
+    if (!graphRef.current || !reportKeyRef.current) return;
+    if (layoutWidthRef.current === layoutWidth) return;
+
+    layoutWidthRef.current = layoutWidth;
+    applyGraph(
+      graphRef.current,
+      reportKeyRef.current,
+      collapseFullButtSplices,
+      { layoutWidth, fitView: false },
+    );
+  }, [applyGraph, collapseFullButtSplices, layoutWidth]);
 
   const persistLayout = useCallback(
     (
