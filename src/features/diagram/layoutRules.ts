@@ -460,7 +460,11 @@ export function checkLayoutRule(
       if (!multi) return { id, ok: true };
       const side = sideOf(multi, ctx.placement);
       const pos = ctx.layout.cablePositions.get(multi.id)!;
-      const bounds = computeCableXBounds(ctx.visualCables, ctx.placement);
+      const bounds = computeCableXBounds(
+        ctx.visualCables,
+        ctx.placement,
+        ctx.layout.layoutWidth,
+      );
       const expectedX = cableXForSide(side, multi.tubes.length, bounds);
       return {
         id,

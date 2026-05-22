@@ -17,6 +17,7 @@ export type DiagramLayout = {
   reportKey: string;
   rowYs: Map<string, number>;
   cablePositions: Map<string, { x: number; y: number; height: number }>;
+  layoutWidth: number;
 };
 
 export const LAYOUT_STORAGE_PREFIX = "splice-detail-layout:";
@@ -47,6 +48,7 @@ export function computeDiagramLayout(
     reportKey: reportStorageKey(graph),
     rowYs: aligned.rowYs,
     cablePositions: aligned.cablePositions,
+    layoutWidth: aligned.layoutWidth,
   };
 }
 

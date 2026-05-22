@@ -55,7 +55,7 @@ When adding layout behavior: update rules doc + checker + contract test in the s
 | Full butt splice | UI toggle, not auto on import | Layout always uses fiber-level rows; collapse is visual-only |
 | Left/Right in CSV | Left = primary pairs; Right = mirror + extras | Dedupe by physical fiber identity; Right-only rows kept |
 | New npm deps | User approval required | PDF lib TBD |
-| Hosting | GitHub Pages via action | Workflow sets `GITHUB_PAGES=true` and now checks out with credentials so `peaceiris/actions-gh-pages` can push `dist/` to `gh-pages` on every `main` push. |
+| Hosting | GitHub Pages via GitHub Actions | `deploy-github-pages.yml` builds with `GITHUB_PAGES=true` and uses official `upload-pages-artifact` + `deploy-pages` (no `gh-pages` branch). Pages source must be **GitHub Actions** in repo settings. |
 
 ## Blockers
 

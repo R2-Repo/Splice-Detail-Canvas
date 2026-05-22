@@ -17,6 +17,7 @@ export type AlignedDiagramLayout = {
   reportKey: string;
   rowYs: Map<string, number>;
   cablePositions: Map<string, { x: number; y: number; height: number }>;
+  layoutWidth: number;
 };
 
 const EXTRA_SPACING_PER_CABLE = 32;
@@ -33,17 +34,19 @@ export function computeCableXBounds(
   layoutWidth: number = CABLE_LAYOUT.width,
 ): CableXBounds {
   const widthBias = Math.max(0, visualCables.length - 2) * 120;
-  const width = Math.max(layoutWidth, CABLE_LAYOUT.width + widthBias);
+  const subjectWidth = layoutWidth ?? CABLE_LAYOUT.width;
+  const width = Math.max(subjectWidth, CABLE_LAYOUT.width + widthBias);
   const sideOf = (vc: VisualCable) =>
     placement.get(vc.id)?.side ?? vc.side;
   const leftCount = visualCables.filter((vc) => sideOf(vc) === "left").length;
   const rightCount = visualCables.filter((vc) => sideOf(vc) === "right")
     .length;
-  const expand = width - CABLE_LAYOUT.width;
-  const leftOffset = extraSpacingForCount(leftCount) + expand / 2;
-  const rightOffset = extraSpacingForCount(rightCount) + expand / 2;
-  const leftX = Math.max(4, CABLE_LAYOUT.leftX - leftOffset);
-  const rightX = Math.min(width - 4, CABLE_LAYOUT.rightX + rightOffset);
+  const extraLeft = extraSpacingForCount(leftCount);
+  const extraRight = extraSpacingForCount(rightCount);
+  const centerX = width / 2;
+  const baseSideGap = Math.max(60, centerX - 40);
+  const leftX = Math.max(4, centerX - (baseSideGap + extraLeft));
+  const rightX = Math.min(width - 4, centerX + (baseSideGap + extraRight));
   return { leftX, rightX };
 }
 
@@ -82,7 +85,12 @@ export function computeAlignedLayout(
     .filter((vc) => sideOf(vc) === "right")
     .sort((a, b) => orderOf(a) - orderOf(b));
 
-  const xBounds = computeCableXBounds(visualCables, placement, layoutWidth);
+  const effectiveWidth = layoutWidth ?? CABLE_LAYOUT.width;
+  const xBounds = computeCableXBounds(
+    visualCables,
+    placement,
+    effectiveWidth,
+  );
 
   const alignedNodeY = (vc: VisualCable): number => {
     let nodeY: number | undefined;
@@ -118,5 +126,6 @@ export function computeAlignedLayout(
     reportKey: "",
     rowYs,
     cablePositions,
+    layoutWidth: effectiveWidth,
   };
 }

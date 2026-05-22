@@ -54,6 +54,14 @@ Agent-maintained context files, minimal token chatter, and production-ready feat
 
 ## GitHub Pages
 
-- `vite.config.ts` now reads `GITHUB_PAGES=true` builds and sets the base path to `/Splice-Detail-Canvas/` so asset URLs resolve when the app is hosted on `https://<org>.github.io/Splice-Detail-Canvas/`. Change the default repo name there if your GitHub repo differs.
-- Pushes to `main` trigger `.github/workflows/deploy-github-pages.yml`, which runs `npm run build` with the same env flag and publishes `dist/` to the `gh-pages` branch via `peaceiris/actions-gh-pages@v4`.
-- Enable GitHub Pages in your repository settings to serve the `gh-pages` branch at `/` (root). Once enabled, every push to `main` updates the live site automatically.
+One-time setup in GitHub (browser):
+
+1. Repo **Settings → Pages**
+2. **Build and deployment → Source:** choose **GitHub Actions** (not “Deploy from a branch”)
+3. Save
+
+After that, every **commit + push to `main`** (including from GitHub Desktop) runs `.github/workflows/deploy-github-pages.yml`, builds the app, and updates the live site.
+
+Live URL: `https://<your-github-username>.github.io/Splice-Detail-Canvas/`
+
+The build sets `GITHUB_PAGES=true` so Vite uses the correct `/Splice-Detail-Canvas/` asset paths. Rename the repo on GitHub? Update the fallback name in `vite.config.ts`.
