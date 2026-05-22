@@ -81,6 +81,7 @@ function WorkflowCanvasInner() {
     fitView?: boolean;
     cableSidesPatch?: Record<string, "left" | "right">;
     layoutWidth?: number;
+    refreshLayout?: boolean;
   };
 
   const applyGraph = useCallback(
@@ -102,7 +103,10 @@ function WorkflowCanvasInner() {
           ...overrides,
           reportKey,
           collapseFullButtSplices: collapse,
-          positions: existing?.positions ?? {},
+          positions:
+            options?.refreshLayout ?? false
+              ? {}
+              : existing?.positions ?? {},
           existingEdgeIds: existing?.existingEdgeIds,
         },
         layoutWidthArg,
@@ -133,7 +137,7 @@ function WorkflowCanvasInner() {
       graphRef.current,
       reportKeyRef.current,
       collapseFullButtSplices,
-      { layoutWidth, fitView: false },
+      { layoutWidth, fitView: false, refreshLayout: true },
     );
   }, [applyGraph, collapseFullButtSplices, layoutWidth]);
 

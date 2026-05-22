@@ -9,7 +9,7 @@
 ## Done
 
 - **Canvas visuals refresh** — overview minimap removed, global styles switched to a white background, and toolbar/inspect/cable-node text + borders now use darker colors for clarity on the lighter canvas
-- **Dynamic width layout** — `WorkflowCanvas` wraps `ReactFlow` in a measurable stage, tracks its rendered width via `ResizeObserver`, and re-applies the layout whenever that width changes so thicker imports always spread the left/right columns across the available canvas; `computeCableXBounds` now also increases the layout width with each visual cable so dense files expand regardless of viewport width.
+- **Dynamic width layout** — `WorkflowCanvas` wraps `ReactFlow` in a measurable stage, tracks its rendered width via `ResizeObserver`, and re-applies the layout whenever that width changes so thicker imports always spread the left/right columns across the available canvas; `computeCableXBounds` now also increases the layout width by 120 px per extra visual cable so dense files fan out even when the viewport is small, and width changes skip cached node positions so the new spacing applies immediately.
 - **`buildReactFlowGraph.ts`** — after layout + position overrides, `displaySideFromCanvasX` sets each cable's display side so breakout/handles point toward center
 - **`WorkflowCanvas.tsx`** — `onNodeDrag` flips a cable's display side while dragging so fiber strands and tubes reroute toward center immediately
 - **`buildReactFlowGraph.test.ts`** — saved position wins over stale `cableSides` override

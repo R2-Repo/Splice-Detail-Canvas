@@ -33,27 +33,17 @@ export function computeCableXBounds(
   layoutWidth: number = CABLE_LAYOUT.width,
 ): CableXBounds {
   const widthBias = Math.max(0, visualCables.length - 2) * 120;
-  const width = Math.max(
-    layoutWidth,
-    CABLE_LAYOUT.width + widthBias,
-  );
-  const centerX = width / 2;
-  const baseCenter = CABLE_LAYOUT.width / 2;
-  const baseLeftSpacing = baseCenter - CABLE_LAYOUT.leftX;
-  const baseRightSpacing = CABLE_LAYOUT.rightX - baseCenter;
-  const widthDelta = width - CABLE_LAYOUT.width;
-  const extraWidth = widthDelta / 2;
+  const width = Math.max(layoutWidth, CABLE_LAYOUT.width + widthBias);
   const sideOf = (vc: VisualCable) =>
     placement.get(vc.id)?.side ?? vc.side;
   const leftCount = visualCables.filter((vc) => sideOf(vc) === "left").length;
   const rightCount = visualCables.filter((vc) => sideOf(vc) === "right")
     .length;
-  const leftSpacing =
-    baseLeftSpacing + extraSpacingForCount(leftCount) + extraWidth;
-  const rightSpacing =
-    baseRightSpacing + extraSpacingForCount(rightCount) + extraWidth;
-  const leftX = Math.max(4, centerX - leftSpacing);
-  const rightX = Math.min(width - 4, centerX + rightSpacing);
+  const expand = width - CABLE_LAYOUT.width;
+  const leftOffset = extraSpacingForCount(leftCount) + expand / 2;
+  const rightOffset = extraSpacingForCount(rightCount) + expand / 2;
+  const leftX = Math.max(4, CABLE_LAYOUT.leftX - leftOffset);
+  const rightX = Math.min(width - 4, CABLE_LAYOUT.rightX + rightOffset);
   return { leftX, rightX };
 }
 

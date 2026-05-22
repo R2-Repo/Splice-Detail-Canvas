@@ -21,7 +21,11 @@ import {
   parentVisualGroupKey,
   type DominantCablePair,
 } from "@/features/diagram/dominantCablePair";
-import { computeAlignedLayout, type AlignedDiagramLayout } from "@/features/diagram/spliceRowLayout";
+import {
+  computeAlignedLayout,
+  computeCableXBounds,
+  type AlignedDiagramLayout,
+} from "@/features/diagram/spliceRowLayout";
 import {
   cableFiberTopToBottomOk,
   compactTubeFiberLayoutOk,
@@ -456,7 +460,8 @@ export function checkLayoutRule(
       if (!multi) return { id, ok: true };
       const side = sideOf(multi, ctx.placement);
       const pos = ctx.layout.cablePositions.get(multi.id)!;
-      const expectedX = cableXForSide(side, multi.tubes.length);
+      const bounds = computeCableXBounds(ctx.visualCables, ctx.placement);
+      const expectedX = cableXForSide(side, multi.tubes.length, bounds);
       return {
         id,
         ok: Math.abs(pos.x - expectedX) < 1,
