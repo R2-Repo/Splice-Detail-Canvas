@@ -1,5 +1,5 @@
 :root {
-  color-scheme: dark;
+  color-scheme: light;
   font-family:
     "Segoe UI",
     system-ui,
@@ -7,8 +7,8 @@
     sans-serif;
   line-height: 1.5;
   font-weight: 400;
-  color: #e2e8f0;
-  background-color: #0f172a;
+  color: #0f172a;
+  background-color: #ffffff;
 }
 
 *,
@@ -50,4 +50,6 @@ body,
 .workflow-canvas {
   width: 100%;
   height: 100%;
+  background-color: #ffffff;
+  color: #0f172a;
 }

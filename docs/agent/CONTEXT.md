@@ -30,12 +30,14 @@
 
 When adding layout behavior: update rules doc + checker + contract test in the same change.
 
-## Recent layout (2026-05-21)
+## Recent layout (2026-05-22)
 
+- **Canvas styling refresh:** overview minimap removed, background switched to white, and toolbar/inspect text + cable-node labels/links now use darker colors so imported diagrams remain legible on the new background
 - **Cable import simplification:** leg identity + canvas placement keyed by **cable name only** (remote Bentley `device` ignored); one visual node per physical cable; `computeCableCanvasSides` optimizes stack placement; edges/butt splices still use CSV From/To columns
 - **11400S fix:** 6 unique cable names → 6 canvas nodes (was 12)
 - **Fiber strand direction:** `buildReactFlowGraph` derives display side from node X (`displaySideFromCanvasX`) so strands always point toward diagram center (fixes stale `cableSides` vs saved position drift) and `WorkflowCanvas` watches drags so hybrid cables recalc fan direction instantly when crossing center
 - **Adaptive spacing + column alignment:** layout now widens left/right offsets via `computeCableXBounds` when a side fills and keeps every cable on the same column (`cableXForSide` ignores tube offsets) so tall imports (Example #3, 300N_MAIN, I-215) start aligned.
+- **Dynamic width layout:** the canvas stage now measures its rendered width via `ResizeObserver` and feeds that value into `buildReactFlowGraph` so `computeCableXBounds` pushes the left/right columns farther apart when the screen is wider, preventing the fan-out from collapsing in dense imports.
 - **300N_MAIN:** butt-splice detection matches tubes by CSV From/To role, not canvas side
 - Prior: 300N parse dedupe, TIA tube order, full butt splice collapse, layout rules contract
 

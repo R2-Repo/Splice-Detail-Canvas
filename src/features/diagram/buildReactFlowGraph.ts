@@ -56,6 +56,7 @@ function applyPlacementToLegs(
 export function buildReactFlowGraph(
   graph: ConnectionGraph,
   overrides?: LayoutOverrides,
+  layoutWidth?: number,
 ): { nodes: Node[]; edges: Edge[]; layout: DiagramLayout } {
   const collapseFullButtSplices = overrides?.collapseFullButtSplices ?? false;
 
@@ -90,6 +91,7 @@ export function buildReactFlowGraph(
     visualCables,
     placement,
     dominant,
+    layoutWidth,
   );
   const positions = nodePositionsForGraph(graph, layout, overrides);
 

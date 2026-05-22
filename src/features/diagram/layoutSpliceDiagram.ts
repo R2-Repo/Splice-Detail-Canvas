@@ -34,12 +34,14 @@ export function computeDiagramLayout(
   visualCables: VisualCable[],
   placement: Map<string, CablePlacement>,
   dominant?: DominantCablePair | null,
+  layoutWidth?: number,
 ): DiagramLayout {
   const aligned = computeAlignedLayout(
     graph,
     visualCables,
     placement,
     dominant,
+    layoutWidth,
   );
   return {
     reportKey: reportStorageKey(graph),

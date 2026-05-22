@@ -13,7 +13,7 @@ import {
   type OnNodeDrag,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useLayoutEffect, useRef, useState } from "react";
 
 import { spliceEdgeTypes } from "@/features/canvas/edgeTypes";
 import {
@@ -29,6 +29,7 @@ import {
   visualCableIdFromNodeId,
 } from "@/features/diagram/cableDisplaySide";
 import { spliceNodeTypes } from "@/features/canvas/nodeTypes";
+import { CABLE_LAYOUT } from "@/features/diagram/cableLayoutMetrics";
 import { buildConnectionGraph } from "@/features/diagram/buildConnectionGraph";
 import { buildReactFlowGraph } from "@/features/diagram/buildReactFlowGraph";
 import { reportStorageKey } from "@/features/diagram/layoutSpliceDiagram";
@@ -53,21 +54,46 @@ function WorkflowCanvasInner() {
   const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
   const [collapseFullButtSplices, setCollapseFullButtSplices] = useState(false);
 
+  const stageRef = useRef<HTMLDivElement | null>(null);
+  const [layoutWidth, setLayoutWidth] = useState<number>(CABLE_LAYOUT.width);
+
+  useLayoutEffect(() => {
+    const stage = stageRef.current;
+    if (!stage) return undefined;
+
+    const measure = () => {
+      const next = Math.max(CABLE_LAYOUT.width, stage.clientWidth || 0);
+      setLayoutWidth(next);
+    };
+
+    measure();
+
+    if (typeof ResizeObserver === "undefined") return undefined;
+
+    const observer = new ResizeObserver(measure);
+    observer.observe(stage);
+    return () => observer.disconnect();
+  }, []);
+
+  type ApplyGraphOptions = {
+    fitView?: boolean;
+    cableSidesPatch?: Record<string, "left" | "right">;
+    layoutWidth?: number;
+  };
+
   const applyGraph = useCallback(
     (
       graph: ConnectionGraph,
       reportKey: string,
       collapse: boolean,
-      options?: {
-        fitView?: boolean;
-        cableSidesPatch?: Record<string, "left" | "right">;
-      },
+      options?: ApplyGraphOptions,
     ) => {
       const existing = loadLayoutOverrides(reportKey);
       const overrides = mergeLayoutOverrides(reportKey, {
         collapseFullButtSplices: collapse,
         cableSides: options?.cableSidesPatch,
       });
+      const layoutWidthArg = options?.layoutWidth ?? layoutWidth;
       const { nodes: nextNodes, edges: nextEdges } = buildReactFlowGraph(
         graph,
         {
@@ -77,6 +103,7 @@ function WorkflowCanvasInner() {
           positions: existing?.positions ?? {},
           existingEdgeIds: existing?.existingEdgeIds,
         },
+        layoutWidthArg,
       );
       setNodes(nextNodes);
       setEdges(nextEdges);
@@ -92,7 +119,7 @@ function WorkflowCanvasInner() {
         }
       });
     },
-    [setNodes, setEdges, fitView, updateNodeInternals],
+    [setNodes, setEdges, fitView, layoutWidth, updateNodeInternals],
   );
 
   const persistLayout = useCallback(
@@ -282,28 +309,30 @@ function WorkflowCanvasInner() {
       {showInspect && inspectText ? (
         <pre className="workflow-canvas__inspect">{inspectText}</pre>
       ) : null}
-      <ReactFlow
-        nodes={nodes}
-        edges={edges}
-        onNodesChange={onNodesChange}
-        onNodeDrag={onNodeDrag}
-        onNodeDragStop={onNodeDragStop}
-        onEdgesChange={onEdgesChange}
-        onEdgeClick={onEdgeClick}
-        nodeTypes={spliceNodeTypes}
-        edgeTypes={spliceEdgeTypes}
-        fitView
-        fitViewOptions={{ padding: 0.25 }}
-        minZoom={0.05}
-        maxZoom={2}
-        nodesDraggable
-        elementsSelectable
-        proOptions={{ hideAttribution: true }}
-      >
-        <Background gap={16} />
-        <Controls />
-        <MiniMap />
-      </ReactFlow>
+      <div className="workflow-canvas__stage" ref={stageRef}>
+        <ReactFlow
+          nodes={nodes}
+          edges={edges}
+          onNodesChange={onNodesChange}
+          onNodeDrag={onNodeDrag}
+          onNodeDragStop={onNodeDragStop}
+          onEdgesChange={onEdgesChange}
+          onEdgeClick={onEdgeClick}
+          nodeTypes={spliceNodeTypes}
+          edgeTypes={spliceEdgeTypes}
+          fitView
+          fitViewOptions={{ padding: 0.25 }}
+          minZoom={0.05}
+          maxZoom={2}
+          nodesDraggable
+          elementsSelectable
+          proOptions={{ hideAttribution: true }}
+        >
+          <Background gap={16} />
+          <Controls />
+          <MiniMap />
+        </ReactFlow>
+      </div>
     </div>
   );
 }

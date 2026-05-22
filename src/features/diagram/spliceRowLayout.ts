@@ -30,19 +30,26 @@ function extraSpacingForCount(count: number): number {
 export function computeCableXBounds(
   visualCables: VisualCable[],
   placement: Map<string, CablePlacement>,
+  layoutWidth: number = CABLE_LAYOUT.width,
 ): CableXBounds {
-  const centerX = CABLE_LAYOUT.width / 2;
-  const baseLeftSpacing = centerX - CABLE_LAYOUT.leftX;
-  const baseRightSpacing = CABLE_LAYOUT.rightX - centerX;
+  const width = Math.max(layoutWidth, CABLE_LAYOUT.width);
+  const centerX = width / 2;
+  const baseCenter = CABLE_LAYOUT.width / 2;
+  const baseLeftSpacing = baseCenter - CABLE_LAYOUT.leftX;
+  const baseRightSpacing = CABLE_LAYOUT.rightX - baseCenter;
+  const widthDelta = width - CABLE_LAYOUT.width;
+  const extraWidth = widthDelta / 2;
   const sideOf = (vc: VisualCable) =>
     placement.get(vc.id)?.side ?? vc.side;
   const leftCount = visualCables.filter((vc) => sideOf(vc) === "left").length;
   const rightCount = visualCables.filter((vc) => sideOf(vc) === "right")
     .length;
-  const leftSpacing = baseLeftSpacing + extraSpacingForCount(leftCount);
-  const rightSpacing = baseRightSpacing + extraSpacingForCount(rightCount);
+  const leftSpacing =
+    baseLeftSpacing + extraSpacingForCount(leftCount) + extraWidth;
+  const rightSpacing =
+    baseRightSpacing + extraSpacingForCount(rightCount) + extraWidth;
   const leftX = Math.max(4, centerX - leftSpacing);
-  const rightX = Math.min(centerX * 2 - 4, centerX + rightSpacing);
+  const rightX = Math.min(width - 4, centerX + rightSpacing);
   return { leftX, rightX };
 }
 
@@ -51,6 +58,7 @@ export function computeAlignedLayout(
   visualCables: VisualCable[],
   placement: Map<string, CablePlacement>,
   dominant?: DominantCablePair | null,
+  layoutWidth?: number,
 ): AlignedDiagramLayout {
   const rowYs = new Map<string, number>();
   const cablePositions = new Map<
@@ -80,7 +88,7 @@ export function computeAlignedLayout(
     .filter((vc) => sideOf(vc) === "right")
     .sort((a, b) => orderOf(a) - orderOf(b));
 
-  const xBounds = computeCableXBounds(visualCables, placement);
+  const xBounds = computeCableXBounds(visualCables, placement, layoutWidth);
 
   const alignedNodeY = (vc: VisualCable): number => {
     let nodeY: number | undefined;
