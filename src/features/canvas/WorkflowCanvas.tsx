@@ -335,8 +335,6 @@ function WorkflowCanvasInner() {
           onEdgeClick={onEdgeClick}
           nodeTypes={spliceNodeTypes}
           edgeTypes={spliceEdgeTypes}
-          fitView
-          fitViewOptions={{ padding: 0.25 }}
           minZoom={0.05}
           maxZoom={2}
           nodesDraggable
