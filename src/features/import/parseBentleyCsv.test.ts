@@ -2,7 +2,12 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
-import { parseBentleyCsv } from "./parseBentleyCsv";
+import {
+  legEndpointKey,
+  logicalEndpointKey,
+  parseBentleyCsv,
+  parseLeftSectionRows,
+} from "./parseBentleyCsv";
 
 const example2Path = join(
   process.cwd(),
@@ -42,5 +47,45 @@ describe("parseBentleyCsv", () => {
     expect(to.tubeColor).toBe("BK");
     expect(to.fiberColor).toBe("BL");
     expect(to.fiberNumber).toBe(85);
+  });
+
+  it("same-tube blank fiber# uses peer-copy for crossover rows", () => {
+    const row =
+      "HUB_2-17,6 DROP (TSC): 3500 S & GARDEN GATE RD,   3,BL,GR,<->,144-SMF 3500 S DIST, ,BL,RO,HUB_2-17,CH 2724";
+    const report = parseBentleyCsv(["Left ---", row].join("\n"));
+    expect(report.pairs).toHaveLength(1);
+    const dist = report.pairs[0]!.endpointB;
+    expect(dist.fiberNumber).toBe(3);
+    expect(dist.fiberNumberSource).toBe("peer-copy");
+  });
+
+  it("Example #3 parses 28 left rows with zero parse failures", () => {
+    const csv = readFileSync(
+      join(
+        process.cwd(),
+        "docs/reference/examples/CSV Splice Detail Example #3.csv",
+      ),
+      "utf8",
+    );
+    const results = parseLeftSectionRows(csv);
+    const failures = results.filter((r) => !r.ok);
+    expect(failures).toHaveLength(0);
+    expect(results.filter((r) => r.ok)).toHaveLength(28);
+    const report = parseBentleyCsv(csv);
+    expect(report.pairs).toHaveLength(28);
+  });
+
+  it("legEndpointKey distinguishes through-cable from/to legs", () => {
+    const fromEp = {
+      device: "HUB",
+      cable: "144 MAIN",
+      fiberNumber: 1,
+      tubeColor: "BL" as const,
+      fiberColor: "BL" as const,
+      csvColumn: "from" as const,
+    };
+    const toEp = { ...fromEp, csvColumn: "to" as const };
+    expect(legEndpointKey(fromEp)).not.toBe(legEndpointKey(toEp));
+    expect(logicalEndpointKey(fromEp)).toBe(logicalEndpointKey(toEp));
   });
 });

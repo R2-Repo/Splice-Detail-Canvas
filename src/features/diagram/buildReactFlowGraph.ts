@@ -1,7 +1,13 @@
 import type { Edge, Node } from "@xyflow/react";
 
-import { smfoLabelForCable } from "@/features/diagram/cableLabels";
-import { computeDiagramScale } from "@/features/diagram/cableBreakoutGeometry";
+import {
+  computeSideCircuitLabelSpans,
+  smfoLabelForCable,
+} from "@/features/diagram/cableLabels";
+import {
+  computeDiagramScale,
+  computeSideStemAlignment,
+} from "@/features/diagram/cableBreakoutGeometry";
 import { computeCanvasPlacement } from "@/features/diagram/canvasPlacement";
 import {
   applyCableSideOverrides,
@@ -9,10 +15,11 @@ import {
 } from "@/features/diagram/cableDisplaySide";
 import {
   CABLE_LAYOUT,
+  compactVisualCableHeight,
   visualCableHeight,
 } from "@/features/diagram/cableLayoutMetrics";
 import { colorHex } from "@/features/diagram/colorCode";
-import { connectionRowIndexMap } from "@/features/diagram/connectionRowOrder";
+import { connectionRowIndexMap, connectionRowOffsets } from "@/features/diagram/connectionRowOrder";
 import {
   collapsedPairIdsFromButtSplices,
   collapsedTubeColorsForVisualCable,
@@ -24,7 +31,15 @@ import {
   nodePositionsForGraph,
   type DiagramLayout,
 } from "@/features/diagram/layoutSpliceDiagram";
+import {
+  computeCableXBounds,
+  resolveSameSideNodeCollisions,
+} from "@/features/diagram/spliceRowLayout";
+import type { CableXBounds } from "@/features/diagram/cableLayoutMetrics";
 import { tubeHandleId } from "@/features/diagram/tubeId";
+import {
+  spliceTubeBundleKey,
+} from "@/features/canvas/edges/spliceEdgeRouting";
 import {
   buildVisualCablesForLayout,
   endpointOnVisualSide,
@@ -38,6 +53,39 @@ import type {
 } from "@/types/splice";
 
 import type { CableNodeData } from "@/features/canvas/nodes/types";
+
+function nodeHeightForVisualCable(
+  vc: VisualCable,
+  collapsedTubeColors?: string[],
+): number {
+  const collapsed = new Set(collapsedTubeColors ?? []);
+  if (collapsed.size === 0) return visualCableHeight(vc);
+
+  const visibleFibers = vc.tubes
+    .filter((t) => !collapsed.has(t.tubeColor))
+    .flatMap((t) => t.fibers);
+  const collapsedTubeCount = vc.tubes.filter((t) =>
+    collapsed.has(t.tubeColor),
+  ).length;
+
+  if (visibleFibers.length === 0) {
+    return compactVisualCableHeight(Math.max(1, collapsedTubeCount));
+  }
+
+  const maxYOffset = Math.max(...visibleFibers.map((f) => f.rowYOffset));
+  const collapsedExtra =
+    collapsedTubeCount > 0
+      ? collapsedTubeCount * CABLE_LAYOUT.fiberRowH
+      : 0;
+  return (
+    CABLE_LAYOUT.headerH +
+    CABLE_LAYOUT.tubeLabelH +
+    maxYOffset +
+    collapsedExtra +
+    CABLE_LAYOUT.fiberRowH +
+    CABLE_LAYOUT.tubeGap
+  );
+}
 
 function applyPlacementToLegs(
   graph: ConnectionGraph,
@@ -57,8 +105,17 @@ export function buildReactFlowGraph(
   graph: ConnectionGraph,
   overrides?: LayoutOverrides,
   layoutWidth?: number,
-): { nodes: Node[]; edges: Edge[]; layout: DiagramLayout } {
+  buildOptions?: { refreshColumnX?: boolean },
+): {
+  nodes: Node[];
+  edges: Edge[];
+  layout: DiagramLayout;
+  xBounds: CableXBounds;
+} {
   const collapseFullButtSplices = overrides?.collapseFullButtSplices ?? false;
+  const effectiveWidth =
+    layoutWidth ?? CABLE_LAYOUT.width;
+  const centerX = effectiveWidth / 2;
 
   const { visualCables, dominant } = buildVisualCablesForLayout(graph);
   const rowIndex = connectionRowIndexMap(graph, visualCables, dominant);
@@ -86,19 +143,42 @@ export function buildReactFlowGraph(
     ? collapsedPairIdsFromButtSplices(resolvedButtSplices.map((r) => r.tube))
     : new Set<string>();
 
+  const activeConnections = orderedFiberConnections(graph).filter(
+    (c) => !hiddenPairIds.has(c.id),
+  );
+  const rowCount = activeConnections.length;
+  const diagramScale = computeDiagramScale(rowCount);
+
+  const rowOffsets = connectionRowOffsets(
+    graph,
+    visualCables,
+    dominant,
+    hiddenPairIds.size > 0 ? hiddenPairIds : undefined,
+  );
+
   const layout = computeDiagramLayout(
     graph,
     visualCables,
     placement,
     dominant,
     layoutWidth,
+    hiddenPairIds.size > 0 ? hiddenPairIds : undefined,
   );
-  const positions = nodePositionsForGraph(graph, layout, overrides);
+  const positions = nodePositionsForGraph(graph, layout, overrides, {
+    refreshColumnX: buildOptions?.refreshColumnX,
+  });
+
+  resolveSameSideNodeCollisions(
+    visualCables,
+    placement,
+    positions,
+    diagramScale,
+  );
 
   for (const vc of visualCables) {
     const pos = positions[`cable-${vc.id}`];
     if (!pos) continue;
-    const displaySide = displaySideFromCanvasX(pos.x);
+    const displaySide = displaySideFromCanvasX(pos.x, centerX);
     vc.side = displaySide;
     const p = placement.get(vc.id);
     if (p) {
@@ -106,10 +186,21 @@ export function buildReactFlowGraph(
     }
   }
 
+  const sideStemAlign = computeSideStemAlignment(
+    visualCables.map((vc) => ({ tubes: vc.tubes, side: vc.side })),
+    CABLE_LAYOUT.fiberRowH,
+    CABLE_LAYOUT.headerH,
+    CABLE_LAYOUT.tubeLabelH,
+    diagramScale,
+  );
+
+  const sideCircuitSpan = computeSideCircuitLabelSpans(
+    visualCables,
+    (vc) => vc.side,
+  );
+
   const nodes: Node[] = [];
   const edges: Edge[] = [];
-  const rowCount = orderedFiberConnections(graph).length;
-  const diagramScale = computeDiagramScale(rowCount);
 
   for (const vc of visualCables) {
     const nodeId = `cable-${vc.id}`;
@@ -127,9 +218,10 @@ export function buildReactFlowGraph(
         legId: vc.legId,
         side: vc.side,
         tubes: vc.tubes,
-        nodeHeight: visualCableHeight(vc),
+        nodeHeight: nodeHeightForVisualCable(vc, collapsedTubes),
         fiberPitch: CABLE_LAYOUT.fiberRowH,
         diagramScale,
+        alignedStemX: sideStemAlign[vc.side],
         spliceNumber: graph.report.header.spliceNumber,
         collapsedTubes,
       } satisfies CableNodeData,
@@ -137,7 +229,7 @@ export function buildReactFlowGraph(
     });
   }
 
-  const laneCount = orderedFiberConnections(graph).length;
+  const laneCount = activeConnections.length;
 
   for (const conn of orderedFiberConnections(graph)) {
     if (hiddenPairIds.has(conn.id)) continue;
@@ -171,6 +263,13 @@ export function buildReactFlowGraph(
         circuitName: conn.pair.circuitName,
         laneIndex,
         laneCount,
+        rowOffset: rowOffsets.get(conn.id) ?? 0,
+        sideCircuitSpan,
+        tubeBundleKey: spliceTubeBundleKey(
+          source.visualCableId,
+          source.endpoint.tubeColor,
+          target.visualCableId,
+        ),
       },
     });
   }
@@ -192,6 +291,9 @@ export function buildReactFlowGraph(
     const laneIndex = Math.min(
       ...tube.pairIds.map((id) => rowIndex.get(id) ?? 0),
     );
+    const rowOffset = Math.min(
+      ...tube.pairIds.map((id) => rowOffsets.get(id) ?? 0),
+    );
 
     edges.push({
       id: `butt-${tube.id}`,
@@ -206,9 +308,17 @@ export function buildReactFlowGraph(
         targetColor: colorHex(rightBase),
         laneIndex,
         laneCount,
+        rowOffset,
+        sideCircuitSpan,
       },
     });
   }
 
-  return { nodes, edges, layout };
+  const xBounds = computeCableXBounds(
+    visualCables,
+    placement,
+    effectiveWidth,
+  );
+
+  return { nodes, edges, layout, xBounds };
 }

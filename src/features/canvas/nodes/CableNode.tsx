@@ -8,7 +8,13 @@ import { useEffect, type CSSProperties } from "react";
 
 import { CABLE_LAYOUT } from "@/features/diagram/cableLayoutMetrics";
 import { computeCableBreakout } from "@/features/diagram/cableBreakoutGeometry";
-import { colorHex, colorName, isStripedTube } from "@/features/diagram/colorCode";
+import {
+  colorHex,
+  colorName,
+  isStripedTube,
+  needsFiberContrastOutline,
+} from "@/features/diagram/colorCode";
+import { ContrastSvgLine } from "@/features/canvas/nodes/ContrastSvgLine";
 import { formatCircuitTag } from "@/features/diagram/cableLabels";
 import { tubeHandleId } from "@/features/diagram/tubeId";
 import type { FiberColorAbbrev, TubeColorCode } from "@/types/splice";
@@ -41,6 +47,7 @@ export function CableNode({ id, data }: NodeProps) {
     CABLE_LAYOUT.headerH,
     CABLE_LAYOUT.tubeLabelH,
     scale,
+    d.alignedStemX,
   );
 
   useEffect(() => {
@@ -112,12 +119,13 @@ export function CableNode({ id, data }: NodeProps) {
           const collapsed = isTubeCollapsed(tube.tubeColor);
           const striped = isStripedTube(tube.tubeColor);
           const stroke = tubeStroke(tube.tubeColor, striped);
+          const tubeBase = tube.tubeColor.split("-")[0] as FiberColorAbbrev;
           const lineEnd = collapsed
             ? { x: geo.stemX, y: tube.end.y }
             : tube.end;
           return (
             <g key={tube.tubeColor}>
-              <line
+              <ContrastSvgLine
                 x1={tube.origin.x}
                 y1={tube.origin.y}
                 x2={lineEnd.x}
@@ -126,10 +134,11 @@ export function CableNode({ id, data }: NodeProps) {
                 strokeWidth={8}
                 strokeLinecap="round"
                 strokeDasharray={stroke.strokeDasharray}
+                contrastOutline={needsFiberContrastOutline(tubeBase)}
               />
               {!collapsed
                 ? tube.fibers.map((fiber) => (
-                    <line
+                    <ContrastSvgLine
                       key={fiber.handleId}
                       x1={fiber.fanFrom.x}
                       y1={fiber.fanFrom.y}
@@ -138,6 +147,9 @@ export function CableNode({ id, data }: NodeProps) {
                       stroke={colorHex(fiber.fiberColor)}
                       strokeWidth={3}
                       strokeLinecap="round"
+                      contrastOutline={needsFiberContrastOutline(
+                        fiber.fiberColor,
+                      )}
                     />
                   ))
                 : null}

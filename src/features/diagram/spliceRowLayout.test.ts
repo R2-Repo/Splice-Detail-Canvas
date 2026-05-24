@@ -164,7 +164,7 @@ describe("computeAlignedLayout", () => {
     }
   });
 
-  it("expands cable spacing when a side fills with cables", () => {
+  it("pushes cable columns toward canvas edges for wide layouts", () => {
     const makeCable = (id: number, side: "left" | "right"): VisualCable => ({
       id: `mock-${side}-${id}`,
       legId: `${side}-${id}`,
@@ -175,24 +175,16 @@ describe("computeAlignedLayout", () => {
       tubes: [{ tubeColor: "BL", fibers: [] }],
     });
 
-    const base = [makeCable(0, "left"), makeCable(0, "right")];
-    const leftHeavy = [
-      ...base,
-      ...Array.from({ length: 6 }, (_, index) => makeCable(index + 1, "left")),
-    ];
-    const rightHeavy = [
-      ...base,
-      ...Array.from({ length: 5 }, (_, index) => makeCable(index + 1, "right")),
-    ];
-
-    const baseBounds = computeCableXBounds(base, placementFor(base));
-    const leftBounds = computeCableXBounds(leftHeavy, placementFor(leftHeavy));
-    const rightBounds = computeCableXBounds(
-      rightHeavy,
-      placementFor(rightHeavy),
+    const cables = [makeCable(0, "left"), makeCable(0, "right")];
+    const wideWidth = 2400;
+    const bounds = computeCableXBounds(
+      cables,
+      placementFor(cables),
+      wideWidth,
     );
 
-    expect(leftBounds.leftX).toBeLessThanOrEqual(baseBounds.leftX);
-    expect(rightBounds.rightX).toBeGreaterThanOrEqual(baseBounds.rightX);
+    expect(bounds.leftX).toBe(24);
+    expect(bounds.rightX).toBeGreaterThan(bounds.leftX + 400);
+    expect(bounds.rightX).toBeLessThan(wideWidth);
   });
 });

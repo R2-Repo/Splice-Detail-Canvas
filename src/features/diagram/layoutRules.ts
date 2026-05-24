@@ -5,12 +5,14 @@ import {
   computeCableBreakout,
   computeSheathSize,
   SHEATH_SIZE,
+  tubeReachFromSheath,
 } from "@/features/diagram/cableBreakoutGeometry";
 import {
   CABLE_LAYOUT,
   cableXForSide,
   FIBER_ROW_PITCH,
   fiberRowOffsetInCable,
+  SPLICE_LANE_SEP,
   TUBE_GROUP_GAP,
 } from "@/features/diagram/cableLayoutMetrics";
 import { computeCanvasPlacement } from "@/features/diagram/canvasPlacement";
@@ -26,6 +28,8 @@ import {
   computeCableXBounds,
   type AlignedDiagramLayout,
 } from "@/features/diagram/spliceRowLayout";
+import { computeSideCircuitLabelSpans } from "@/features/diagram/cableLabels";
+import { importLayoutWidthForGraph } from "@/features/diagram/layoutSpliceDiagram";
 import {
   cableFiberTopToBottomOk,
   compactTubeFiberLayoutOk,
@@ -39,6 +43,26 @@ import {
 } from "@/features/diagram/visualCables";
 import type { ConnectionGraph, FiberConnection } from "@/types/splice";
 import type { CablePlacement } from "@/features/diagram/canvasPlacement";
+import {
+  assignSpliceMidXLanes,
+  assignSpliceRoutingLanes,
+  buildSplicePath,
+  fiberHandlePosition,
+  hvDemarcatedPathsCross,
+  horizontalInsetOkFromHandle,
+  maxSpliceBendsForLane,
+  type MidXLaneCandidate,
+  parallelSpliceSegmentsOverlap,
+  pickSpliceRouteTemplate,
+  resolveSpliceMidX,
+  spliceMidOrderInverts,
+  spliceRouteSegments,
+  type SpliceRoutingLane,
+  SPLICE_PATH_EPS,
+  spliceRoutingZoneKey,
+  templateUsesMidXLanes,
+} from "@/features/canvas/edges/spliceEdgeRouting";
+import { orderedFiberConnections } from "@/features/diagram/buildConnectionGraph";
 
 /** Stable rule IDs — must match docs/agent/LAYOUT_RULES.md */
 export const LAYOUT_RULE_IDS = [
@@ -52,6 +76,7 @@ export const LAYOUT_RULE_IDS = [
   "TUB-004",
   "TUB-005",
   "TUB-006",
+  "TUB-007",
   "CBL-001",
   "CBL-002",
   "CBL-003",
@@ -63,7 +88,17 @@ export const LAYOUT_RULE_IDS = [
   "DOM-001",
   "DOM-002",
   "DOM-003",
+  "DOM-004",
   "EDGE-001",
+  "EDGE-004",
+  "EDGE-005",
+  "EDGE-006",
+  "EDGE-007",
+  "EDGE-008",
+  "EDGE-009",
+  "EDGE-010",
+  "EDGE-011",
+  "STR-001",
 ] as const;
 
 export type LayoutRuleId = (typeof LAYOUT_RULE_IDS)[number];
@@ -71,7 +106,7 @@ export type LayoutRuleId = (typeof LAYOUT_RULE_IDS)[number];
 export type LayoutRuleMeta = {
   id: LayoutRuleId;
   title: string;
-  category: "fiber" | "tube" | "cable" | "row" | "dominant" | "edge";
+  category: "fiber" | "tube" | "cable" | "row" | "dominant" | "edge" | "strand";
 };
 
 export const LAYOUT_RULES: LayoutRuleMeta[] = [
@@ -85,6 +120,11 @@ export const LAYOUT_RULES: LayoutRuleMeta[] = [
   { id: "TUB-004", title: "Multi-tube cables have longer tube reach", category: "tube" },
   { id: "TUB-005", title: "Right-side breakout mirrors left", category: "tube" },
   { id: "TUB-006", title: "Buffer tubes in TIA solid then striped order", category: "tube" },
+  {
+    id: "TUB-007",
+    title: "Same-side cables align fiber label columns at shared stem X",
+    category: "tube",
+  },
   { id: "CBL-001", title: "Same-side cables do not overlap", category: "cable" },
   { id: "CBL-002", title: "Same-side cables stack with at least cableGap", category: "cable" },
   { id: "CBL-003", title: "Multi-tube cables offset X from center", category: "cable" },
@@ -96,7 +136,49 @@ export const LAYOUT_RULES: LayoutRuleMeta[] = [
   { id: "DOM-001", title: "Dominant pair has most splice rows", category: "dominant" },
   { id: "DOM-002", title: "Dominant pair rows precede other rows", category: "dominant" },
   { id: "DOM-003", title: "Dominant pair fibers align horizontally", category: "dominant" },
+  { id: "DOM-004", title: "High-count pairs (4+ rows) align straight across", category: "dominant" },
   { id: "EDGE-001", title: "Distinct routing lane per splice edge on import", category: "edge" },
+  {
+    id: "EDGE-004",
+    title: "Splice path uses at most two orthogonal bends handle-to-handle",
+    category: "edge",
+  },
+  {
+    id: "EDGE-005",
+    title: "Center lanes preserve buffer-tube row-offset grouping",
+    category: "edge",
+  },
+  {
+    id: "EDGE-006",
+    title: "Route template minimizes bends among grouping-preserving paths",
+    category: "edge",
+  },
+  {
+    id: "EDGE-007",
+    title: "Nested center bends avoid horizontal-vertical strand crossings",
+    category: "edge",
+  },
+  {
+    id: "EDGE-008",
+    title: "Center vertical lanes keep minimum fiber line spacing",
+    category: "edge",
+  },
+  {
+    id: "EDGE-009",
+    title: "Splice paths run horizontally toward center before vertical legs",
+    category: "edge",
+  },
+  {
+    id: "EDGE-010",
+    title: "Same buffer-tube fibers to one target cable share spaced center lanes",
+    category: "edge",
+  },
+  {
+    id: "EDGE-011",
+    title: "Splice strand segments never stack on the same horizontal or vertical track",
+    category: "edge",
+  },
+  { id: "STR-001", title: "Fiber strands fan toward canvas center", category: "strand" },
 ];
 
 export type LayoutRuleContext = {
@@ -106,6 +188,7 @@ export type LayoutRuleContext = {
   placement: Map<string, CablePlacement>;
   layout: AlignedDiagramLayout;
   reactFlow: { nodes: Node[]; edges: Edge[] };
+  layoutWidth: number;
 };
 
 export type LayoutRuleResult = {
@@ -195,25 +278,17 @@ function tubeGeometryOk(
 }
 
 function tubeReachIncreases(visualCables: VisualCable[]): boolean {
-  const single = visualCables.find((v) => v.tubes.length === 1);
-  const multi = visualCables.find((v) => v.tubes.length > 1);
-  if (!single || !multi) return true;
+  const singles = visualCables.filter((v) => v.tubes.length === 1);
+  const multis = visualCables.filter((v) => v.tubes.length > 1);
+  if (singles.length === 0 || multis.length === 0) return true;
 
-  const one = computeCableBreakout(
-    single.tubes,
-    single.side,
-    FIBER_ROW_PITCH,
-    CABLE_LAYOUT.headerH,
-    CABLE_LAYOUT.tubeLabelH,
+  const maxSingleReach = Math.max(
+    ...singles.map((v) => tubeReachFromSheath(v.tubes.length)),
   );
-  const two = computeCableBreakout(
-    multi.tubes,
-    multi.side,
-    FIBER_ROW_PITCH,
-    CABLE_LAYOUT.headerH,
-    CABLE_LAYOUT.tubeLabelH,
+  const minMultiReach = Math.min(
+    ...multis.map((v) => tubeReachFromSheath(v.tubes.length)),
   );
-  return two.stemX - two.sheath.width > one.stemX - one.sheath.width;
+  return minMultiReach > maxSingleReach;
 }
 
 function rightSideMirrors(visualCables: VisualCable[]): boolean {
@@ -295,6 +370,30 @@ function spliceEndpointsAligned(
     }
   }
   return true;
+}
+
+function highCountPairRowAlignment(ctx: LayoutRuleContext): boolean {
+  const counts = new Map<string, number>();
+  for (const conn of ctx.graph.connections) {
+    if (conn.kind !== "fiber") continue;
+    const left = endpointOnVisualSide(conn, ctx.graph, ctx.visualCables, "left");
+    const right = endpointOnVisualSide(conn, ctx.graph, ctx.visualCables, "right");
+    if (!left || !right) continue;
+    const key = `${left.visualCableId}\0${right.visualCableId}`;
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+  const highCountKeys = new Set(
+    [...counts.entries()]
+      .filter(([, n]) => n >= 4)
+      .map(([k]) => k),
+  );
+  if (highCountKeys.size === 0) return true;
+  return spliceEndpointsAligned(ctx, (conn) => {
+    const left = endpointOnVisualSide(conn, ctx.graph, ctx.visualCables, "left");
+    const right = endpointOnVisualSide(conn, ctx.graph, ctx.visualCables, "right");
+    if (!left || !right) return false;
+    return highCountKeys.has(`${left.visualCableId}\0${right.visualCableId}`);
+  });
 }
 
 function fiberHandleRowAlignment(ctx: LayoutRuleContext): boolean {
@@ -381,13 +480,709 @@ function distinctEdgeLanes(edges: Edge[]): boolean {
   return new Set(lanes).size === spliceEdges.length;
 }
 
-export function buildLayoutRuleContext(graph: ConnectionGraph): LayoutRuleContext {
+function spliceHandleEndpoints(
+  ctx: LayoutRuleContext,
+  conn: FiberConnection,
+): {
+  sourceX: number;
+  sourceY: number;
+  targetX: number;
+  targetY: number;
+  rowOffset: number;
+} | null {
+  const csvLeft = endpointOnVisualSide(
+    conn,
+    ctx.graph,
+    ctx.visualCables,
+    "left",
+  );
+  const csvRight = endpointOnVisualSide(
+    conn,
+    ctx.graph,
+    ctx.visualCables,
+    "right",
+  );
+  if (!csvLeft || !csvRight) return null;
+
+  const nodeById = new Map(ctx.reactFlow.nodes.map((n) => [n.id, n]));
+  const leftNode = nodeById.get(`cable-${csvLeft.visualCableId}`);
+  const rightNode = nodeById.get(`cable-${csvRight.visualCableId}`);
+  if (!leftNode || !rightNode) return null;
+
+  const leftVc = ctx.visualCables.find((v) => v.id === csvLeft.visualCableId);
+  const rightVc = ctx.visualCables.find((v) => v.id === csvRight.visualCableId);
+  if (!leftVc || !rightVc) return null;
+
+  const leftScale =
+    (leftNode.data as { diagramScale?: number }).diagramScale ?? 1;
+  const rightScale =
+    (rightNode.data as { diagramScale?: number }).diagramScale ?? 1;
+  const leftAligned = (leftNode.data as { alignedStemX?: number }).alignedStemX;
+  const rightAligned = (rightNode.data as {
+    alignedStemX?: number;
+  }).alignedStemX;
+  const leftHandle = fiberHandlePosition(
+    leftVc,
+    conn.id,
+    leftNode.position,
+    leftScale,
+    leftAligned,
+  );
+  const rightHandle = fiberHandlePosition(
+    rightVc,
+    conn.id,
+    rightNode.position,
+    rightScale,
+    rightAligned,
+  );
+
+  let sourceHandle = leftHandle;
+  let targetHandle = rightHandle;
+  if (
+    csvLeft.canvasSide === "right" &&
+    csvRight.canvasSide === "left"
+  ) {
+    sourceHandle = rightHandle;
+    targetHandle = leftHandle;
+  }
+
+  const edge = ctx.reactFlow.edges.find((e) => e.id === `splice-${conn.id}`);
+  const rowOffset = (edge?.data as { rowOffset?: number })?.rowOffset ?? 0;
+
+  return {
+    sourceX: sourceHandle.x,
+    sourceY: sourceHandle.y,
+    targetX: targetHandle.x,
+    targetY: targetHandle.y,
+    rowOffset,
+  };
+}
+
+function sideCircuitSpanFromCtx(ctx: LayoutRuleContext) {
+  for (const edge of ctx.reactFlow.edges) {
+    if (edge.type !== "splice") continue;
+    const span = (edge.data as { sideCircuitSpan?: { left: number; right: number } })
+      .sideCircuitSpan;
+    if (span) return span;
+  }
+  return computeSideCircuitLabelSpans(ctx.visualCables, (vc) =>
+    sideOf(vc, ctx.placement),
+  );
+}
+
+function buildMidXLaneCandidates(ctx: LayoutRuleContext): MidXLaneCandidate[] {
+  const candidates: MidXLaneCandidate[] = [];
+
+  for (const conn of orderedFiberConnections(ctx.graph)) {
+    if (conn.kind !== "fiber") continue;
+    const endpoints = spliceHandleEndpoints(ctx, conn);
+    if (!endpoints) continue;
+
+    const { sourceX, sourceY, targetX, targetY, rowOffset } = endpoints;
+    if (
+      !templateUsesMidXLanes(
+        pickSpliceRouteTemplate(sourceX, sourceY, targetX, targetY),
+      )
+    ) {
+      continue;
+    }
+
+    const edge = ctx.reactFlow.edges.find((e) => e.id === `splice-${conn.id}`);
+    const tubeBundleKey = (edge?.data as { tubeBundleKey?: string })
+      ?.tubeBundleKey;
+
+    candidates.push({
+      id: conn.id,
+      sourceX,
+      sourceY,
+      targetX,
+      targetY,
+      rowOffset,
+      tubeBundleKey,
+    });
+  }
+
+  return candidates;
+}
+
+function buildPackedRoutingMap(ctx: LayoutRuleContext): Map<string, SpliceRoutingLane> {
+  return assignSpliceRoutingLanes(
+    buildMidXLaneCandidates(ctx),
+    sideCircuitSpanFromCtx(ctx),
+  );
+}
+
+function buildPackedMidXMap(ctx: LayoutRuleContext): Map<string, number> {
+  const packed = buildPackedRoutingMap(ctx);
+  const result = new Map<string, number>();
+  for (const [id, lane] of packed) {
+    result.set(id, lane.midX);
+  }
+  return result;
+}
+
+function resolveCtxSpliceRouting(
+  ctx: LayoutRuleContext,
+  connId: string,
+  endpoints: {
+    sourceX: number;
+    sourceY: number;
+    targetX: number;
+    targetY: number;
+    rowOffset: number;
+  },
+  packed: Map<string, SpliceRoutingLane>,
+): SpliceRoutingLane {
+  const packedLane = packed.get(connId);
+  if (packedLane) return packedLane;
+
+  const rowOffsets = connectionRowOffsets(
+    ctx.graph,
+    ctx.visualCables,
+    ctx.dominant,
+  );
+  const maxRowOffset = Math.max(0, ...rowOffsets.values());
+  const { sourceX, sourceY, targetX, targetY, rowOffset } = endpoints;
+  return {
+    midX: resolveSpliceMidX(sourceX, sourceY, targetX, targetY, {
+      rowOffset,
+      maxRowOffset,
+      diagramCenterX: ctx.layoutWidth / 2,
+      sideCircuitSpan: sideCircuitSpanFromCtx(ctx),
+    }),
+  };
+}
+
+function resolveCtxSpliceMidX(
+  ctx: LayoutRuleContext,
+  connId: string,
+  endpoints: {
+    sourceX: number;
+    sourceY: number;
+    targetX: number;
+    targetY: number;
+    rowOffset: number;
+  },
+  packed: Map<string, number>,
+): number {
+  const packedMidX = packed.get(connId);
+  if (packedMidX !== undefined) return packedMidX;
+
+  const rowOffsets = connectionRowOffsets(
+    ctx.graph,
+    ctx.visualCables,
+    ctx.dominant,
+  );
+  const maxRowOffset = Math.max(0, ...rowOffsets.values());
+  const { sourceX, sourceY, targetX, targetY, rowOffset } = endpoints;
+  return resolveSpliceMidX(sourceX, sourceY, targetX, targetY, {
+    rowOffset,
+    maxRowOffset,
+    diagramCenterX: ctx.layoutWidth / 2,
+    sideCircuitSpan: sideCircuitSpanFromCtx(ctx),
+  });
+}
+
+function splicePathsWithinBendLimit(ctx: LayoutRuleContext): boolean {
+  const packed = buildPackedRoutingMap(ctx);
+
+  for (const conn of orderedFiberConnections(ctx.graph)) {
+    if (conn.kind !== "fiber") continue;
+    const endpoints = spliceHandleEndpoints(ctx, conn);
+    if (!endpoints) continue;
+
+    const { sourceX, sourceY, targetX, targetY } = endpoints;
+    const lane = resolveCtxSpliceRouting(ctx, conn.id, endpoints, packed);
+    const { midX, jogX, sourceHorizY, targetHorizY } = lane;
+    const { bendCount } = buildSplicePath(
+      sourceX,
+      sourceY,
+      targetX,
+      targetY,
+      midX,
+      jogX,
+      { sourceHorizY, targetHorizY },
+    );
+    const maxBends = maxSpliceBendsForLane(sourceY, targetY, lane);
+    if (bendCount > maxBends) return false;
+  }
+  return true;
+}
+
+function centerLanesPreserveTubeGrouping(ctx: LayoutRuleContext): boolean {
+  const packed = buildPackedMidXMap(ctx);
+  const byZone = new Map<
+    string,
+    { rowOffset: number; midX: number; inverts: boolean }[]
+  >();
+
+  for (const conn of orderedFiberConnections(ctx.graph)) {
+    if (conn.kind !== "fiber") continue;
+    const endpoints = spliceHandleEndpoints(ctx, conn);
+    if (!endpoints) continue;
+
+    const { sourceX, sourceY, targetX, targetY, rowOffset } = endpoints;
+    if (
+      !templateUsesMidXLanes(
+        pickSpliceRouteTemplate(sourceX, sourceY, targetX, targetY),
+      )
+    ) {
+      continue;
+    }
+
+    const key = spliceRoutingZoneKey(sourceX, targetX);
+    const list = byZone.get(key) ?? [];
+    list.push({
+      rowOffset,
+      midX: resolveCtxSpliceMidX(ctx, conn.id, endpoints, packed),
+      inverts: spliceMidOrderInverts(sourceX, sourceY, targetX, targetY),
+    });
+    byZone.set(key, list);
+  }
+
+  for (const lanes of byZone.values()) {
+    lanes.sort((a, b) => a.rowOffset - b.rowOffset);
+    for (let i = 1; i < lanes.length; i++) {
+      const prev = lanes[i - 1]!;
+      const curr = lanes[i]!;
+      if (prev.inverts !== curr.inverts) continue;
+      if (prev.inverts) {
+        if (curr.midX > prev.midX + Y_TOLERANCE) return false;
+      } else if (curr.midX < prev.midX - Y_TOLERANCE) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+function centerLanesKeepMinSpacing(ctx: LayoutRuleContext): boolean {
+  const candidates = buildMidXLaneCandidates(ctx);
+  const packed = assignSpliceMidXLanes(candidates, sideCircuitSpanFromCtx(ctx));
+  const byZone = new Map<string, number[]>();
+
+  for (const candidate of candidates) {
+    const midX = packed.get(candidate.id);
+    if (midX === undefined) continue;
+    const zoneKey = spliceRoutingZoneKey(candidate.sourceX, candidate.targetX);
+    const list = byZone.get(zoneKey) ?? [];
+    list.push(midX);
+    byZone.set(zoneKey, list);
+  }
+
+  for (const mids of byZone.values()) {
+    const sorted = [...mids].sort((a, b) => a - b);
+    for (let i = 1; i < sorted.length; i++) {
+      if (sorted[i]! - sorted[i - 1]! < SPLICE_LANE_SEP - SPLICE_PATH_EPS) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+function tubeBundleRoutesAreSpaced(ctx: LayoutRuleContext): boolean {
+  const packed = buildPackedRoutingMap(ctx);
+  const byBundle = new Map<string, Array<{ midX: number; jogX?: number }>>();
+
+  for (const conn of orderedFiberConnections(ctx.graph)) {
+    if (conn.kind !== "fiber") continue;
+    const edge = ctx.reactFlow.edges.find((e) => e.id === `splice-${conn.id}`);
+    const tubeBundleKey = (edge?.data as { tubeBundleKey?: string })
+      ?.tubeBundleKey;
+    if (!tubeBundleKey) continue;
+
+    const endpoints = spliceHandleEndpoints(ctx, conn);
+    if (!endpoints) continue;
+    const { sourceX, sourceY, targetX, targetY } = endpoints;
+    if (
+      !templateUsesMidXLanes(
+        pickSpliceRouteTemplate(sourceX, sourceY, targetX, targetY),
+      )
+    ) {
+      continue;
+    }
+
+    const lane = resolveCtxSpliceRouting(ctx, conn.id, endpoints, packed);
+    const zoneKey = spliceRoutingZoneKey(sourceX, targetX);
+    const key = `${zoneKey}::${tubeBundleKey}`;
+    const list = byBundle.get(key) ?? [];
+    list.push({ midX: lane.midX, jogX: lane.jogX });
+    byBundle.set(key, list);
+  }
+
+  for (const members of byBundle.values()) {
+    if (members.length <= 1) continue;
+    const sorted = [...members].sort((a, b) => a.midX - b.midX);
+    for (let i = 1; i < sorted.length; i++) {
+      if (
+        sorted[i]!.midX - sorted[i - 1]!.midX <
+        SPLICE_LANE_SEP - SPLICE_PATH_EPS
+      ) {
+        return false;
+      }
+    }
+    const jogValues = [
+      ...new Set(
+        members
+          .map((member) => member.jogX)
+          .filter((jogX): jogX is number => jogX !== undefined)
+          .map((jogX) => Math.round(jogX)),
+      ),
+    ];
+    if (jogValues.length > 1) return false;
+  }
+
+  return true;
+}
+
+function splicePathsDoNotOverlap(ctx: LayoutRuleContext): boolean {
+  return findSpliceOverlapPair(ctx) === null;
+}
+
+/** @internal test helper — first overlapping strand pair, if any. */
+export function findSpliceOverlapPair(ctx: LayoutRuleContext): string | null {
+  const packed = buildPackedRoutingMap(ctx);
+  const routed: Array<{
+    id: string;
+    sourceX: number;
+    sourceY: number;
+    targetX: number;
+    targetY: number;
+    midX: number;
+    jogX?: number;
+    sourceHorizY?: number;
+    targetHorizY?: number;
+    tubeBundleKey?: string;
+  }> = [];
+
+  for (const conn of orderedFiberConnections(ctx.graph)) {
+    if (conn.kind !== "fiber") continue;
+    const endpoints = spliceHandleEndpoints(ctx, conn);
+    if (!endpoints) continue;
+
+    const { sourceX, sourceY, targetX, targetY } = endpoints;
+    const template = pickSpliceRouteTemplate(
+      sourceX,
+      sourceY,
+      targetX,
+      targetY,
+    );
+    if (template === "straight") continue;
+
+    const edge = ctx.reactFlow.edges.find((e) => e.id === `splice-${conn.id}`);
+    const tubeBundleKey = (edge?.data as { tubeBundleKey?: string })
+      ?.tubeBundleKey;
+    const lane = packed.get(conn.id);
+    if (!lane || !Number.isFinite(lane.midX)) continue;
+    routed.push({
+      id: conn.id,
+      sourceX,
+      sourceY,
+      targetX,
+      targetY,
+      midX: lane.midX,
+      jogX: lane.jogX,
+      sourceHorizY: lane.sourceHorizY,
+      targetHorizY: lane.targetHorizY,
+      tubeBundleKey,
+    });
+  }
+
+  for (let i = 0; i < routed.length; i++) {
+    for (let j = i + 1; j < routed.length; j++) {
+      const a = routed[i]!;
+      const b = routed[j]!;
+      if (a.tubeBundleKey && a.tubeBundleKey === b.tubeBundleKey) continue;
+      if (
+        spliceRoutingZoneKey(a.sourceX, a.targetX) !==
+        spliceRoutingZoneKey(b.sourceX, b.targetX)
+      ) {
+        continue;
+      }
+      if (
+        Math.abs(a.targetX - b.targetX) <= Y_TOLERANCE &&
+        Math.abs(a.targetY - b.targetY) <= Y_TOLERANCE
+      ) {
+        continue;
+      }
+      const segsA = spliceRouteSegments(
+        a.sourceX,
+        a.sourceY,
+        a.targetX,
+        a.targetY,
+        a.midX,
+        a.jogX,
+        { sourceHorizY: a.sourceHorizY, targetHorizY: a.targetHorizY },
+      );
+      const segsB = spliceRouteSegments(
+        b.sourceX,
+        b.sourceY,
+        b.targetX,
+        b.targetY,
+        b.midX,
+        b.jogX,
+        { sourceHorizY: b.sourceHorizY, targetHorizY: b.targetHorizY },
+      );
+      for (const segA of segsA) {
+        for (const segB of segsB) {
+          if (parallelSpliceSegmentsOverlap(segA, segB)) {
+            return `${a.id} vs ${b.id} :: ${segA.kind}/${segB.kind} mid=${a.midX}/${b.midX}`;
+          }
+        }
+      }
+    }
+  }
+
+  return null;
+}
+
+function spliceCenterPathsDoNotCross(ctx: LayoutRuleContext): boolean {
+  const packed = buildPackedRoutingMap(ctx);
+  const routed: {
+    sourceX: number;
+    sourceY: number;
+    targetX: number;
+    targetY: number;
+    midX: number;
+    jogX?: number;
+    sourceHorizY?: number;
+    targetHorizY?: number;
+    inverts: boolean;
+    tubeBundleKey?: string;
+  }[] = [];
+
+  for (const conn of orderedFiberConnections(ctx.graph)) {
+    if (conn.kind !== "fiber") continue;
+    const endpoints = spliceHandleEndpoints(ctx, conn);
+    if (!endpoints) continue;
+
+    const { sourceX, sourceY, targetX, targetY } = endpoints;
+    if (
+      !templateUsesMidXLanes(
+        pickSpliceRouteTemplate(sourceX, sourceY, targetX, targetY),
+      )
+    ) {
+      continue;
+    }
+    const edge = ctx.reactFlow.edges.find((e) => e.id === `splice-${conn.id}`);
+    const tubeBundleKey = (edge?.data as { tubeBundleKey?: string })
+      ?.tubeBundleKey;
+    const lane = resolveCtxSpliceRouting(ctx, conn.id, endpoints, packed);
+    routed.push({
+      sourceX,
+      sourceY,
+      targetX,
+      targetY,
+      midX: lane.midX,
+      jogX: lane.jogX,
+      sourceHorizY: lane.sourceHorizY,
+      targetHorizY: lane.targetHorizY,
+      inverts: spliceMidOrderInverts(sourceX, sourceY, targetX, targetY),
+      tubeBundleKey,
+    });
+  }
+
+  for (let i = 0; i < routed.length; i++) {
+    for (let j = i + 1; j < routed.length; j++) {
+      const a = routed[i]!;
+      const b = routed[j]!;
+      if (a.inverts !== b.inverts) continue;
+      if (a.tubeBundleKey && a.tubeBundleKey === b.tubeBundleKey) continue;
+      if (
+        Math.abs(a.sourceX - b.sourceX) > Y_TOLERANCE * 8 ||
+        Math.abs(a.targetX - b.targetX) > Y_TOLERANCE * 8
+      ) {
+        continue;
+      }
+      if (
+        hvDemarcatedPathsCross(
+          a.sourceX,
+          a.sourceY,
+          a.targetX,
+          a.targetY,
+          a.midX,
+          b.sourceX,
+          b.sourceY,
+          b.targetX,
+          b.targetY,
+          b.midX,
+          a.jogX,
+          b.jogX,
+          { sourceHorizY: a.sourceHorizY, targetHorizY: a.targetHorizY },
+          { sourceHorizY: b.sourceHorizY, targetHorizY: b.targetHorizY },
+        )
+      ) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+function sameSideSplicesDetourTowardCenter(ctx: LayoutRuleContext): boolean {
+  const packed = buildPackedMidXMap(ctx);
+  const centerX = ctx.layoutWidth / 2;
+  const sideSpans = sideCircuitSpanFromCtx(ctx);
+
+  for (const conn of orderedFiberConnections(ctx.graph)) {
+    if (conn.kind !== "fiber") continue;
+    const endpoints = spliceHandleEndpoints(ctx, conn);
+    if (!endpoints) continue;
+
+    const { sourceX, sourceY, targetX, targetY } = endpoints;
+    const template = pickSpliceRouteTemplate(
+      sourceX,
+      sourceY,
+      targetX,
+      targetY,
+    );
+    if (template === "straight") continue;
+
+    const midX = resolveCtxSpliceMidX(ctx, conn.id, endpoints, packed);
+    if (
+      !horizontalInsetOkFromHandle(midX, sourceX, centerX, sideSpans) ||
+      !horizontalInsetOkFromHandle(midX, targetX, centerX, sideSpans)
+    ) {
+      return false;
+    }
+
+    if (template !== "same_side") continue;
+
+    const columnX = (sourceX + targetX) / 2;
+    const inward = columnX <= centerX ? 1 : -1;
+    if (inward > 0 && midX <= columnX + SPLICE_PATH_EPS) return false;
+    if (inward < 0 && midX >= columnX - SPLICE_PATH_EPS) return false;
+  }
+  return true;
+}
+
+function spliceRoutesMinimizeBends(ctx: LayoutRuleContext): boolean {
+  for (const conn of orderedFiberConnections(ctx.graph)) {
+    if (conn.kind !== "fiber") continue;
+    const endpoints = spliceHandleEndpoints(ctx, conn);
+    if (!endpoints) continue;
+
+    const { sourceX, sourceY, targetX, targetY } = endpoints;
+    const expected = pickSpliceRouteTemplate(
+      sourceX,
+      sourceY,
+      targetX,
+      targetY,
+    );
+    const midX = resolveSpliceMidX(sourceX, sourceY, targetX, targetY);
+    const built = buildSplicePath(sourceX, sourceY, targetX, targetY, midX);
+    if (built.template !== expected) return false;
+  }
+  return true;
+}
+
+function sameSideFiberStemColumnsAligned(ctx: LayoutRuleContext): boolean {
+  for (const side of ["left", "right"] as const) {
+    const stemCanvasX: number[] = [];
+
+    for (const node of ctx.reactFlow.nodes) {
+      if (node.type !== "cable") continue;
+      const data = node.data as {
+        side: "left" | "right";
+        alignedStemX?: number;
+        diagramScale?: number;
+      };
+      const vc = ctx.visualCables.find((v) => `cable-${v.id}` === node.id);
+      if (!vc) continue;
+      if (sideOf(vc, ctx.placement) !== side) continue;
+
+      const scale = data.diagramScale ?? 1;
+      const geo = computeCableBreakout(
+        vc.tubes,
+        side,
+        CABLE_LAYOUT.fiberRowH,
+        CABLE_LAYOUT.headerH,
+        CABLE_LAYOUT.tubeLabelH,
+        scale,
+        data.alignedStemX,
+      );
+      stemCanvasX.push(
+        side === "left"
+          ? node.position.x + geo.stemX
+          : node.position.x + geo.viewWidth - geo.stemX,
+      );
+    }
+
+    if (stemCanvasX.length <= 1) continue;
+    const expected = stemCanvasX[0]!;
+    for (const x of stemCanvasX.slice(1)) {
+      if (Math.abs(x - expected) > Y_TOLERANCE) return false;
+    }
+  }
+  return true;
+}
+
+function strandFansTowardCenter(ctx: LayoutRuleContext): boolean {
+  const centerX = ctx.layoutWidth / 2;
+
+  for (const node of ctx.reactFlow.nodes) {
+    if (node.type !== "cable") continue;
+    const data = node.data as {
+      side: "left" | "right";
+      tubes: VisualCable["tubes"];
+      diagramScale?: number;
+      fiberPitch?: number;
+      alignedStemX?: number;
+    };
+    const scale = data.diagramScale ?? 1;
+    const pitch = data.fiberPitch ?? CABLE_LAYOUT.fiberRowH;
+    const geo = computeCableBreakout(
+      data.tubes,
+      data.side,
+      pitch,
+      CABLE_LAYOUT.headerH,
+      CABLE_LAYOUT.tubeLabelH,
+      scale,
+      data.alignedStemX,
+    );
+    const sheathCenterLocal = geo.sheath.x + geo.sheath.width / 2;
+
+    for (const tube of geo.tubes) {
+      for (const fiber of tube.fibers) {
+        const absSheathCenter = node.position.x + sheathCenterLocal;
+        const absFanTo = node.position.x + fiber.fanTo.x;
+        if (data.side === "left" && absFanTo <= absSheathCenter + Y_TOLERANCE) {
+          return false;
+        }
+        if (data.side === "right" && absFanTo >= absSheathCenter - Y_TOLERANCE) {
+          return false;
+        }
+      }
+    }
+
+    const absSheathCenter = node.position.x + sheathCenterLocal;
+    if (data.side === "left" && absSheathCenter >= centerX) return false;
+    if (data.side === "right" && absSheathCenter <= centerX) return false;
+  }
+
+  return true;
+}
+
+export function buildLayoutRuleContext(
+  graph: ConnectionGraph,
+  layoutWidth?: number,
+): LayoutRuleContext {
+  const width = layoutWidth ?? importLayoutWidthForGraph(graph);
   const { visualCables, dominant } = buildVisualCablesForLayout(graph);
   const rowIndex = connectionRowIndexMap(graph, visualCables, dominant);
   const placement = computeCanvasPlacement(graph, visualCables, dominant, rowIndex);
-  const layout = computeAlignedLayout(graph, visualCables, placement, dominant);
-  const reactFlow = buildReactFlowGraph(graph);
-  return { graph, visualCables, dominant, placement, layout, reactFlow };
+  const layout = computeAlignedLayout(graph, visualCables, placement, dominant, width);
+  const { nodes, edges } = buildReactFlowGraph(graph, undefined, width);
+  return {
+    graph,
+    visualCables,
+    dominant,
+    placement,
+    layout,
+    reactFlow: { nodes, edges },
+    layoutWidth: width,
+  };
 }
 
 export function checkLayoutRule(
@@ -442,6 +1237,12 @@ export function checkLayoutRule(
         id,
         ok: tubesInTiaOrderOk(ctx.visualCables),
         detail: "Buffer tubes are not in TIA color order",
+      };
+    case "TUB-007":
+      return {
+        id,
+        ok: sameSideFiberStemColumnsAligned(ctx),
+        detail: "Same-side cable fiber label columns are not vertically aligned",
       };
     case "CBL-001":
       return {
@@ -527,11 +1328,73 @@ export function checkLayoutRule(
         ok: dominantPairOk(ctx),
         detail: "Dominant cable pair layout invariant failed",
       };
+    case "DOM-004":
+      return {
+        id,
+        ok: highCountPairRowAlignment(ctx),
+        detail: "High-count cable pair splice handles are not horizontally aligned",
+      };
     case "EDGE-001":
       return {
         id,
         ok: distinctEdgeLanes(ctx.reactFlow.edges),
         detail: "Splice edges share routing lanes on import",
+      };
+    case "EDGE-004":
+      return {
+        id,
+        ok: splicePathsWithinBendLimit(ctx),
+        detail: "Splice path exceeds two orthogonal bends handle-to-handle",
+      };
+    case "EDGE-005":
+      return {
+        id,
+        ok: centerLanesPreserveTubeGrouping(ctx),
+        detail: "Center lane midX order breaks buffer-tube row-offset grouping",
+      };
+    case "EDGE-006":
+      return {
+        id,
+        ok: spliceRoutesMinimizeBends(ctx),
+        detail: "Splice route template is not the minimum-bend choice",
+      };
+    case "EDGE-007":
+      return {
+        id,
+        ok: spliceCenterPathsDoNotCross(ctx),
+        detail: "Splice center paths cross between horizontal and vertical legs",
+      };
+    case "EDGE-008":
+      return {
+        id,
+        ok: centerLanesKeepMinSpacing(ctx),
+        detail: "Center vertical splice lanes are closer than minimum fiber line spacing",
+      };
+    case "EDGE-009":
+      return {
+        id,
+        ok: sameSideSplicesDetourTowardCenter(ctx),
+        detail: "Splice paths do not run horizontally toward center before vertical legs",
+      };
+    case "EDGE-010":
+      return {
+        id,
+        ok: tubeBundleRoutesAreSpaced(ctx),
+        detail: "Tube bundle splice lanes overlap or lack shared horizontal trunk spacing",
+      };
+    case "EDGE-011":
+      return {
+        id,
+        ok: splicePathsDoNotOverlap(ctx),
+        detail:
+          findSpliceOverlapPair(ctx) ??
+          "Splice strand segments stack on the same horizontal or vertical track",
+      };
+    case "STR-001":
+      return {
+        id,
+        ok: strandFansTowardCenter(ctx),
+        detail: "Fiber strand fans away from canvas center",
       };
     default:
       return { id, ok: false, detail: "Unknown rule" };

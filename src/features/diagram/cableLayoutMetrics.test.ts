@@ -5,6 +5,7 @@ import {
   fiberRowY,
   FIBER_ROW_PITCH,
   MIN_FIBER_LINE_GAP,
+  resolveCableDragStopX,
   SPLICE_LANE_SEP,
 } from "./cableLayoutMetrics";
 
@@ -19,5 +20,23 @@ describe("fiber line spacing", () => {
   it("uses equal gap for vertical rows and horizontal splice lanes", () => {
     expect(SPLICE_LANE_SEP).toBe(FIBER_ROW_PITCH);
     expect(SPLICE_LANE_SEP).toBe(MIN_FIBER_LINE_GAP);
+  });
+});
+
+describe("resolveCableDragStopX", () => {
+  const bounds = { leftX: 24, rightX: 9000 };
+
+  it("magnetically snaps when released near the side column", () => {
+    expect(resolveCableDragStopX(8985, "right", bounds)).toBe(9000);
+    expect(resolveCableDragStopX(40, "left", bounds)).toBe(24);
+  });
+
+  it("keeps custom spread when released away from the column", () => {
+    expect(resolveCableDragStopX(5000, "right", bounds)).toBe(5000);
+    expect(resolveCableDragStopX(7500, "right", bounds)).toBe(7500);
+  });
+
+  it("clamps to bounds", () => {
+    expect(resolveCableDragStopX(9500, "right", bounds)).toBe(9000);
   });
 });

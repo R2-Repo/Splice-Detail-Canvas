@@ -1,4 +1,10 @@
 /** Bentley-style cable header from name (e.g. "006 SMFO (R2)"). */
+import {
+  FIBER_CIRCUIT_MAX_WIDTH,
+  fiberRowPrefixWidth,
+} from "@/features/diagram/cableLayoutMetrics";
+import type { VisualCable } from "@/features/diagram/visualCables";
+
 export function smfoLabelForCable(cable: string): string | undefined {
   if (/DROP/i.test(cable)) {
     const m = cable.match(/\b(\d+)\s*[- ]?DROP/i) ?? cable.match(/^(\d+)/);
@@ -18,4 +24,40 @@ export function formatCircuitTag(circuitName?: string, fiberColor?: string): str
   const base = circuitName.replace(/\s+/g, " ").trim();
   if (!fiberColor) return `(${base})`;
   return `(${base})`;
+}
+
+/** Estimated rendered width of a circuit/OS tag (matches cable-node__circuit cap). */
+export function formattedCircuitTagWidth(circuitName?: string): number {
+  const tag = formatCircuitTag(circuitName);
+  if (!tag) return 0;
+  const estimated = tag.length * 4.5;
+  return Math.min(estimated, FIBER_CIRCUIT_MAX_WIDTH);
+}
+
+export type SideCircuitLabelSpan = { left: number; right: number };
+
+function maxCircuitTagWidthForCables(cables: VisualCable[]): number {
+  let max = 0;
+  for (const vc of cables) {
+    for (const tube of vc.tubes) {
+      for (const fiber of tube.fibers) {
+        max = Math.max(max, formattedCircuitTagWidth(fiber.circuitName));
+      }
+    }
+  }
+  return max;
+}
+
+/** Longest handle→circuit-tag span per canvas side (prefix + max OS width). */
+export function computeSideCircuitLabelSpans(
+  visualCables: VisualCable[],
+  sideOf: (vc: VisualCable) => "left" | "right",
+): SideCircuitLabelSpan {
+  const prefix = fiberRowPrefixWidth();
+  const leftCables = visualCables.filter((vc) => sideOf(vc) === "left");
+  const rightCables = visualCables.filter((vc) => sideOf(vc) === "right");
+  return {
+    left: prefix + maxCircuitTagWidthForCables(leftCables),
+    right: prefix + maxCircuitTagWidthForCables(rightCables),
+  };
 }

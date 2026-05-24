@@ -54,5 +54,6 @@ export function mergeLayoutOverrides(
     cableSides: { ...existing?.cableSides, ...patch.cableSides },
     collapseFullButtSplices:
       patch.collapseFullButtSplices ?? existing?.collapseFullButtSplices,
+    layoutWidth: patch.layoutWidth ?? existing?.layoutWidth,
   };
 }

@@ -4,41 +4,33 @@
 
 ## Last updated
 
-2026-05-22 — canvas stage now measures its width so imports stretch across the screen, while the white background/contrast refresh remains in place.
+2026-05-23 — Horizontal + vertical strand spacing (EDGE-011 fix).
 
 ## Done
 
-- **Canvas visuals refresh** — overview minimap removed, global styles switched to a white background, and toolbar/inspect/cable-node text + borders now use darker colors for clarity on the lighter canvas
-- **Dynamic width layout** — `WorkflowCanvas` wraps `ReactFlow` in a measurable stage, tracks its rendered width via `ResizeObserver`, and re-applies the layout whenever that width changes so thicker imports always spread the left/right columns across the available canvas; `computeCableXBounds` now adds 400 px per extra visual cable plus much larger per-side spreads so the diagram fans out toward the screen edges and cached positions are cleared on each refresh so the spacing shows up right away.
-- **`buildReactFlowGraph.ts`** — after layout + position overrides, `displaySideFromCanvasX` sets each cable's display side so breakout/handles point toward center
-- **`WorkflowCanvas.tsx`** — `onNodeDrag` flips a cable's display side while dragging so fiber strands and tubes reroute toward center immediately
-- **`buildReactFlowGraph.test.ts`** — saved position wins over stale `cableSides` override
-- **`cableBreakoutGeometry.test.ts`** — strands fan inward for left/right sides
-- **`spliceRowLayout.ts`** — `computeCableXBounds` expands left/right offsets when one side fills with cables and column Xs ignore tube count so nodes stay vertically aligned
-- **`spliceRowLayout.test.ts`** — validates spacing grows as a side fills with cables
-- **GitHub Pages deployment** — workflow now uses official `upload-pages-artifact` + `deploy-pages` (matches Pages source = GitHub Actions; no `gh-pages` branch needed).
-- Prior: cable-name-only import; one canvas node per physical cable; edge wiring fix
+- **EDGE-011 no same-track stacking:** `parallelSpliceSegmentsOverlap` flags collinear overlap only; zone-wide `assignSideHorizLaneYs` assigns `sourceHorizY` / `targetHorizY` (24px apart) when horizontal legs would stack — including aligned-row source vs target legs (Example #3)
+- **Path builders** use side offsets: short V jog at handle, horizontal at offset Y, final V into handle on target side
+- **EDGE-010 retained:** tube bundles get spaced `midX` lanes + shared `jogX` trunk (not collapsed to one vertical)
+- **`maxSpliceBendsForLane`** raises bend budget when jog + side offsets apply
 
 ## Try it
 
 ```bash
-npm run test:layout   # required before finishing
 npm run verify
 npm run dev
 ```
 
-Import `docs/reference/examples/SP-I-15_11400S.csv` → **6** cable nodes (not 12).
-
-Examples #1–#3 unchanged (3 / 4 / 4 nodes). 300N_MAIN butt-splice collapse still works.
+Re-import Example #3 / busy splice — no fibers drawn on top of each other on horizontal or vertical tracks; tube fibers to same target stay grouped via shared `jogX` then fan to 24px vertical lanes.
 
 ## Next
 
+- User visual check on production CSVs
+- fitView zoom cap
 - Match PNG typography exactly
-- PDF export (needs dep approval)
 
 ## Commands verified
 
-- `npm run test:layout`
-- `npm run check`
-- `npm run test:ci` (135 tests)
+- `npm run test:layout` ✓
+- `npm run check` (after unused fn removal)
+- `npm run test:ci`
 - `npm run build`

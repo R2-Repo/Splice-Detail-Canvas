@@ -1,7 +1,21 @@
 import type { CablePlacement } from "@/features/diagram/canvasPlacement";
-import { CABLE_LAYOUT } from "@/features/diagram/cableLayoutMetrics";
+import { orderedFiberConnections } from "@/features/diagram/buildConnectionGraph";
+import {
+  CABLE_LAYOUT,
+  minCenterGapForRowSpan,
+} from "@/features/diagram/cableLayoutMetrics";
+import { connectionRowOffsets, maxConnectionRowOffset } from "@/features/diagram/connectionRowOrder";
 import type { DominantCablePair } from "@/features/diagram/dominantCablePair";
-import { computeAlignedLayout } from "@/features/diagram/spliceRowLayout";
+import {
+  collapsedPairIdsFromButtSplices,
+  detectFullButtSpliceTubes,
+  resolveFullButtSpliceVisuals,
+} from "@/features/diagram/fullButtSplice";
+import {
+  computeAlignedLayout,
+  estimatedCableNodeWidth,
+} from "@/features/diagram/spliceRowLayout";
+import { buildVisualCablesForLayout } from "@/features/diagram/visualCables";
 import type { VisualCable } from "@/features/diagram/visualCables";
 import type { ConnectionGraph, LayoutOverrides } from "@/types/splice";
 
@@ -22,6 +36,66 @@ export type DiagramLayout = {
 
 export const LAYOUT_STORAGE_PREFIX = "splice-detail-layout:";
 
+export type ImportLayoutWidthOptions = {
+  collapse?: boolean;
+  stageWidth?: number;
+};
+
+function hiddenPairIdsForLayout(
+  graph: ConnectionGraph,
+  collapse: boolean,
+): Set<string> {
+  if (!collapse) return new Set();
+  const { visualCables } = buildVisualCablesForLayout(graph);
+  const detected = detectFullButtSpliceTubes(graph, visualCables);
+  const resolved = resolveFullButtSpliceVisuals(visualCables, detected);
+  return collapsedPairIdsFromButtSplices(resolved.map((r) => r.tube));
+}
+
+/** Active splice lane count — matches edge routing after optional butt collapse. */
+export function activeSpliceLaneCount(
+  graph: ConnectionGraph,
+  collapse = false,
+): number {
+  const hidden = hiddenPairIdsForLayout(graph, collapse);
+  return orderedFiberConnections(graph).filter((c) => !hidden.has(c.id)).length;
+}
+
+/**
+ * Minimum canvas width so cable columns leave enough center gap for splice lanes.
+ * Uses global row-offset span so horizontal lane spacing matches vertical tube groups.
+ */
+export function importLayoutWidthForGraph(
+  graph: ConnectionGraph,
+  options?: ImportLayoutWidthOptions,
+): number {
+  const collapse = options?.collapse ?? false;
+  const hidden = hiddenPairIdsForLayout(graph, collapse);
+  const laneCount = activeSpliceLaneCount(graph, collapse);
+  const { visualCables, dominant } = buildVisualCablesForLayout(graph);
+  const rowOffsets = connectionRowOffsets(
+    graph,
+    visualCables,
+    dominant,
+    hidden.size > 0 ? hidden : undefined,
+  );
+  const maxRowOffset = maxConnectionRowOffset(rowOffsets);
+  const maxTubes = Math.max(1, ...visualCables.map((vc) => vc.tubes.length));
+  const nodeWidth = estimatedCableNodeWidth(
+    maxTubes,
+    1,
+    visualCables.map((vc) => vc.tubes.length),
+  );
+  const margin = CABLE_LAYOUT.leftX;
+
+  const minCenterGap = minCenterGapForRowSpan(maxRowOffset, laneCount);
+  const columnSpan = 2 * margin + 2 * nodeWidth + minCenterGap;
+  const rowFloor = laneCount * CABLE_LAYOUT.fiberRowH + 600;
+  const stageWidth = options?.stageWidth ?? 0;
+
+  return Math.max(CABLE_LAYOUT.width, stageWidth, columnSpan, rowFloor);
+}
+
 export function reportStorageKey(graph: ConnectionGraph): string {
   const name =
     graph.report.header.spliceNumber ??
@@ -36,6 +110,7 @@ export function computeDiagramLayout(
   placement: Map<string, CablePlacement>,
   dominant?: DominantCablePair | null,
   layoutWidth?: number,
+  excludeConnectionIds?: ReadonlySet<string>,
 ): DiagramLayout {
   const aligned = computeAlignedLayout(
     graph,
@@ -43,6 +118,7 @@ export function computeDiagramLayout(
     placement,
     dominant,
     layoutWidth,
+    excludeConnectionIds,
   );
   return {
     reportKey: reportStorageKey(graph),
@@ -52,22 +128,38 @@ export function computeDiagramLayout(
   };
 }
 
+export type ApplyLayoutOverridesOptions = {
+  /** On import: keep saved Y but always use auto column X from layout. */
+  refreshColumnX?: boolean;
+};
+
 export function applyLayoutOverrides(
   positions: Record<string, { x: number; y: number }>,
   overrides?: LayoutOverrides,
+  options?: ApplyLayoutOverridesOptions,
 ): Record<string, { x: number; y: number }> {
   if (!overrides?.positions) return positions;
-  return { ...positions, ...overrides.positions };
+  if (!options?.refreshColumnX) {
+    return { ...positions, ...overrides.positions };
+  }
+
+  const merged = { ...positions };
+  for (const [id, saved] of Object.entries(overrides.positions)) {
+    const auto = positions[id];
+    merged[id] = auto ? { x: auto.x, y: saved.y } : saved;
+  }
+  return merged;
 }
 
 export function nodePositionsForGraph(
   _graph: ConnectionGraph,
   layout: DiagramLayout,
   overrides?: LayoutOverrides,
+  options?: ApplyLayoutOverridesOptions,
 ): Record<string, { x: number; y: number }> {
   const positions: Record<string, { x: number; y: number }> = {};
   for (const [id, pos] of layout.cablePositions) {
     positions[`cable-${id}`] = { x: pos.x, y: pos.y };
   }
-  return applyLayoutOverrides(positions, overrides);
+  return applyLayoutOverrides(positions, overrides, options);
 }

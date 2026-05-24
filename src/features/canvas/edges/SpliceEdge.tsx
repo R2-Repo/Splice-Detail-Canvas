@@ -1,10 +1,15 @@
 import { BaseEdge, type EdgeProps } from "@xyflow/react";
 
 import {
-  buildDemarcatedSplicePaths,
-  spliceMidX,
+  buildSplicePath,
+  defaultSideCircuitLabelSpan,
   useRoutingLaneIndex,
 } from "@/features/canvas/edges/spliceEdgeRouting";
+import type { SideCircuitLabelSpan } from "@/features/diagram/cableLabels";
+import {
+  FIBER_CONTRAST_OUTLINE,
+  needsFiberContrastOutlineHex,
+} from "@/features/diagram/colorCode";
 
 type SpliceEdgeData = {
   /** @deprecated use sourceColor */
@@ -15,7 +20,55 @@ type SpliceEdgeData = {
   fullButtSplice?: boolean;
   laneIndex?: number;
   laneCount?: number;
+  laneOverride?: number;
+  /** Global row offset (px) for proportional center lane spacing. */
+  rowOffset?: number;
+  /** Longest OS label span per side — splice jog starts after this. */
+  sideCircuitSpan?: SideCircuitLabelSpan;
+  /** Same source tube + target cable — fibers share one center lane. */
+  tubeBundleKey?: string;
+  circuitName?: string;
 };
+
+function SpliceLeg({
+  id,
+  path,
+  stroke,
+  strokeWidth,
+  strokeDasharray,
+  opacity,
+}: {
+  id: string;
+  path: string;
+  stroke: string;
+  strokeWidth: number;
+  strokeDasharray?: string;
+  opacity: number;
+}) {
+  const edgeStyle = {
+    strokeWidth,
+    strokeDasharray,
+    opacity,
+  };
+  const contrast = needsFiberContrastOutlineHex(stroke);
+
+  return (
+    <>
+      {contrast ? (
+        <BaseEdge
+          id={`${id}-outline`}
+          path={path}
+          style={{
+            ...edgeStyle,
+            stroke: FIBER_CONTRAST_OUTLINE,
+            strokeWidth: strokeWidth + 2,
+          }}
+        />
+      ) : null}
+      <BaseEdge id={id} path={path} style={{ ...edgeStyle, stroke }} />
+    </>
+  );
+}
 
 export function SpliceEdge({
   id,
@@ -26,11 +79,11 @@ export function SpliceEdge({
   data,
 }: EdgeProps) {
   const d = (data ?? {}) as SpliceEdgeData;
-  const fallbackLane = d.laneIndex ?? 0;
+  const fallbackLane = d.laneOverride ?? d.laneIndex ?? 0;
   const laneCount = Math.max(1, d.laneCount ?? 1);
   const useDynamicLanes = laneCount > 1;
 
-  const { routingLane, activeLaneCount } = useRoutingLaneIndex(
+  const { midX, jogX, sourceHorizY, targetHorizY } = useRoutingLaneIndex(
     id,
     sourceX,
     sourceY,
@@ -39,21 +92,19 @@ export function SpliceEdge({
     fallbackLane,
     useDynamicLanes,
     laneCount,
+    d.rowOffset,
+    d.sideCircuitSpan ?? defaultSideCircuitLabelSpan(),
+    d.tubeBundleKey,
   );
 
-  const midX = spliceMidX(
-    sourceX,
-    targetX,
-    routingLane,
-    useDynamicLanes ? activeLaneCount : laneCount,
-  );
-
-  const { leftPath, rightPath, spliceX, spliceY } = buildDemarcatedSplicePaths(
+  const { leftPath, rightPath, spliceX, spliceY } = buildSplicePath(
     sourceX,
     sourceY,
     targetX,
     targetY,
     midX,
+    jogX,
+    { sourceHorizY, targetHorizY },
   );
 
   const fallback = d.color ?? "#e2e8f0";
@@ -61,23 +112,25 @@ export function SpliceEdge({
   const targetStroke = d.existing ? "#94a3b8" : (d.targetColor ?? fallback);
   const dash = d.existing ? "8 5" : undefined;
   const tubeStroke = d.fullButtSplice ? 8 : d.existing ? 1.5 : 2.5;
-  const edgeStyle = {
-    strokeWidth: tubeStroke,
-    strokeDasharray: dash,
-    opacity: d.existing ? 0.85 : 1,
-  };
+  const edgeOpacity = d.existing ? 0.85 : 1;
 
   return (
     <>
-      <BaseEdge
+      <SpliceLeg
         id={`${id}-left`}
         path={leftPath}
-        style={{ ...edgeStyle, stroke: sourceStroke }}
+        stroke={sourceStroke}
+        strokeWidth={tubeStroke}
+        strokeDasharray={dash}
+        opacity={edgeOpacity}
       />
-      <BaseEdge
+      <SpliceLeg
         id={`${id}-right`}
         path={rightPath}
-        style={{ ...edgeStyle, stroke: targetStroke }}
+        stroke={targetStroke}
+        strokeWidth={tubeStroke}
+        strokeDasharray={dash}
+        opacity={edgeOpacity}
       />
       {!d.existing ? (
         d.fullButtSplice ? (

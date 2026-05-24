@@ -1,5 +1,4 @@
 import type { VisualTube } from "@/features/diagram/visualCables";
-import type { TubeColorCode } from "@/types/splice";
 
 export type CableNodeData = {
   /** Bentley count line, e.g. "006 SMFO (R2)". */
@@ -13,9 +12,11 @@ export type CableNodeData = {
   fiberPitch: number;
   /** Diagram scale factor for sheath/tube sizing. */
   diagramScale?: number;
+  /** Shared stem X for this canvas side (fiber OS + color labels align). */
+  alignedStemX?: number;
   spliceNumber?: string;
   /** Buffer tube colors hidden when full-butt-splice collapse is on. */
-  collapsedTubes?: TubeColorCode[];
+  collapsedTubes?: string[];
 };
 
 export type BufferTubeNodeData = {

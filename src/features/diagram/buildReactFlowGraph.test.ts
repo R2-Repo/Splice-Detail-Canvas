@@ -121,6 +121,27 @@ describe("buildReactFlowGraph", () => {
     expect(edges.filter((e) => e.type === "splice")).toHaveLength(28);
   });
 
+  it("Example #2: wide layout keeps strands fanning toward center", () => {
+    const csv = readFileSync(
+      join(examples, "CSV Splice Detail Example #2.csv"),
+      "utf8",
+    );
+    const graph = buildConnectionGraph(parseBentleyCsv(csv));
+    const wideWidth = 2200;
+    const { nodes } = buildReactFlowGraph(graph, undefined, wideWidth);
+
+    for (const node of nodes) {
+      if (node.type !== "cable") continue;
+      const side = (node.data as { side: string }).side;
+      const centerX = wideWidth / 2;
+      if (side === "left") {
+        expect(node.position.x).toBeLessThan(centerX);
+      } else {
+        expect(node.position.x).toBeGreaterThan(centerX);
+      }
+    }
+  });
+
   it("Example #2: collapse is a no-op without 12-fiber full tubes", () => {
     const csv = readFileSync(
       join(examples, "CSV Splice Detail Example #2.csv"),

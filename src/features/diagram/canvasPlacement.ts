@@ -1,11 +1,10 @@
-import { cableLegIdForEndpoint } from "@/features/diagram/buildConnectionGraph";
 import type { DominantCablePair } from "@/features/diagram/dominantCablePair";
 import {
   minRowIndexForVisualCable,
   parentVisualGroupKey,
 } from "@/features/diagram/dominantCablePair";
 import type { VisualCable } from "@/features/diagram/visualCables";
-import type { CableLegId, ConnectionGraph } from "@/types/splice";
+import type { ConnectionGraph } from "@/types/splice";
 
 export type CablePlacement = {
   side: "left" | "right";
@@ -23,6 +22,37 @@ function cableSortRank(cable: string, side: "left" | "right"): number {
   return 10 + n;
 }
 
+function fiberCountForVisualCable(vc: VisualCable): number {
+  return vc.tubes.reduce((n, t) => n + t.fibers.length, 0);
+}
+
+function connectionCountForCable(graph: ConnectionGraph, cable: string): number {
+  let count = 0;
+  for (const conn of graph.connections) {
+    if (conn.kind !== "fiber") continue;
+    if (
+      conn.pair.endpointA.cable === cable ||
+      conn.pair.endpointB.cable === cable
+    ) {
+      count += 1;
+    }
+  }
+  return count;
+}
+
+/** Data-driven tie-break after dominant/row ordering. */
+function cableSortTieBreak(
+  a: VisualCable,
+  b: VisualCable,
+  graph: ConnectionGraph,
+): number {
+  const connDiff =
+    connectionCountForCable(graph, b.cable) -
+    connectionCountForCable(graph, a.cable);
+  if (connDiff !== 0) return connDiff;
+  return fiberCountForVisualCable(b) - fiberCountForVisualCable(a);
+}
+
 export function computeCanvasPlacement(
   graph: ConnectionGraph,
   visualCables: VisualCable[],
@@ -34,8 +64,6 @@ export function computeCanvasPlacement(
   for (const vc of visualCables) {
     placement.set(vc.id, { side: vc.side, order: vc.order });
   }
-
-  rebalanceCrossingSides(graph, visualCables, placement);
 
   const bySide = { left: [] as VisualCable[], right: [] as VisualCable[] };
   for (const vc of visualCables) {
@@ -53,6 +81,7 @@ export function computeCanvasPlacement(
             ? minRowIndexForVisualCable(a, rowIndex) -
               minRowIndexForVisualCable(b, rowIndex)
             : 0) ||
+          cableSortTieBreak(a, b, graph) ||
           cableSortRank(a.cable, side) - cableSortRank(b.cable, side) ||
           a.cable.localeCompare(b.cable) ||
           a.order - b.order,
@@ -63,54 +92,6 @@ export function computeCanvasPlacement(
   }
 
   return placement;
-}
-
-function rebalanceCrossingSides(
-  graph: ConnectionGraph,
-  visualCables: VisualCable[],
-  placement: Map<string, CablePlacement>,
-): void {
-  const legSideVotes = new Map<CableLegId, { left: number; right: number }>();
-
-  for (const conn of graph.connections) {
-    if (conn.kind !== "fiber") continue;
-    const a = cableLegIdForEndpoint(conn.pair.endpointA);
-    const b = cableLegIdForEndpoint(conn.pair.endpointB);
-    const legA = graph.legs.find((l) => l.id === a);
-    const legB = graph.legs.find((l) => l.id === b);
-    if (!legA || !legB) continue;
-
-    if (legA.csvColumn === "from" && legB.csvColumn === "to") {
-      bumpVote(legSideVotes, a, "left");
-      bumpVote(legSideVotes, b, "right");
-    } else if (legA.csvColumn === "to" && legB.csvColumn === "from") {
-      bumpVote(legSideVotes, a, "right");
-      bumpVote(legSideVotes, b, "left");
-    }
-  }
-
-  for (const vc of visualCables) {
-    const votes = legSideVotes.get(vc.legId);
-    if (!votes) continue;
-    const side: "left" | "right" =
-      votes.left > votes.right
-        ? "left"
-        : votes.right > votes.left
-          ? "right"
-          : vc.side;
-    const current = placement.get(vc.id)!;
-    placement.set(vc.id, { ...current, side });
-  }
-}
-
-function bumpVote(
-  map: Map<CableLegId, { left: number; right: number }>,
-  legId: CableLegId,
-  side: "left" | "right",
-): void {
-  const v = map.get(legId) ?? { left: 0, right: 0 };
-  v[side] += 1;
-  map.set(legId, v);
 }
 
 function dominantGroupRank(

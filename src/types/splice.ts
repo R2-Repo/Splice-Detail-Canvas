@@ -23,11 +23,15 @@ export type TubeColorCode = FiberColorAbbrev | `${FiberColorAbbrev}-BK`;
 /** Which side of `<->` the endpoint was parsed from (Bentley From / To columns). */
 export type CsvColumnRole = "from" | "to";
 
+export type FiberNumberSource = "csv" | "inferred" | "peer-copy" | "missing";
+
 export type FiberEndpoint = {
   device: string;
   cable: string;
   /** CSV fiber number (Bentley "Number/Buffer" column) — not the tube color. */
   fiberNumber: number;
+  /** How fiberNumber was resolved when CSV value was blank. */
+  fiberNumberSource?: FiberNumberSource;
   /** CSV buffer tube color (first Color column, e.g. BL). */
   tubeColor: TubeColorCode;
   /** CSV second color — fiber color within the tube. */
@@ -68,8 +72,8 @@ export type SpliceReport = {
   pairs: SplicePair[];
   /** Per-cable From/To counts in Left and Right sections (mirror disambiguation). */
   cableAppearances: CableAppearanceSummary[];
-  /** Per-row outcomes for Left --- section (diagnostics). */
-  leftRowResults?: ParseRowResult[];
+  /** Per-row outcomes for Left + Right sections (diagnostics). */
+  rowResults?: ParseRowResult[];
 };
 
 /**
@@ -127,7 +131,7 @@ export type LayoutNodePosition = {
 };
 
 /** Bump when override shape/semantics change — ignores stale localStorage. */
-export const LAYOUT_OVERRIDE_VERSION = 5;
+export const LAYOUT_OVERRIDE_VERSION = 9;
 
 export type LayoutOverrides = {
   reportKey: string;
@@ -138,4 +142,6 @@ export type LayoutOverrides = {
   cableSides?: Record<string, "left" | "right">;
   /** Collapse full-butt-spliced buffer tubes (hide strands, show tube splice squares). */
   collapseFullButtSplices?: boolean;
+  /** Import-time canvas width used for column placement and strand center. */
+  layoutWidth?: number;
 };

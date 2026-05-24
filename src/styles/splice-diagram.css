@@ -30,6 +30,65 @@
   min-height: 0;
 }
 
+.workflow-canvas__body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+
+.workflow-canvas__body .workflow-canvas__stage {
+  flex: 1;
+}
+
+.diagram-inspector {
+  width: 260px;
+  border-left: 1px solid #cbd5e1;
+  padding: 0.75rem;
+  overflow: auto;
+  font-size: 0.8125rem;
+  background: #f8fafc;
+}
+
+.diagram-inspector h3 {
+  margin: 0 0 0.5rem;
+  font-size: 0.875rem;
+}
+
+.diagram-inspector__list {
+  margin: 0;
+}
+
+.diagram-inspector__list dt {
+  font-weight: 600;
+  margin-top: 0.35rem;
+}
+
+.diagram-inspector__list dd {
+  margin: 0;
+  color: #334155;
+}
+
+.diagram-inspector__empty {
+  color: #64748b;
+}
+
+.cable-node__fiber-drag,
+.cable-node__tube-reach-drag {
+  margin-left: 4px;
+  padding: 0 4px;
+  font-size: 0.65rem;
+  border: 1px solid #94a3b8;
+  border-radius: 4px;
+  background: #fff;
+  cursor: ns-resize;
+  pointer-events: all;
+}
+
+.cable-node__tube-reach-drag {
+  cursor: ew-resize;
+  margin-left: 6px;
+}
+
 .workflow-canvas__stage > .react-flow {
   width: 100%;
   height: 100%;

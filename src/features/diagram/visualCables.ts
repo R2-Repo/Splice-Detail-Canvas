@@ -27,6 +27,8 @@ import type {
 
 export type VisualFiber = {
   connectionId: string;
+  /** Additional splices on the same physical fiber (shared handle). */
+  spliceConnectionIds?: string[];
   fiberNumber: number;
   fiberColor: FiberColorAbbrev;
   tubeColor: TubeColorCode;
@@ -127,7 +129,24 @@ function opposingLegIdsForFibers(
   return set;
 }
 
-/** Ring-cut 144: two cylinders on one side — split into two visual cables (pairs 0–1 and 2–3). */
+/** Ring-cut: split when all fibers share one opposing leg and row order has two contiguous blocks. */
+function contiguousSplitCount(fibers: LegFiberRef[]): number {
+  if (fibers.length <= 2) return 1;
+  const sorted = [...fibers].sort((a, b) => a.rowIndex - b.rowIndex);
+  let maxGap = 0;
+  let splitAt = -1;
+  for (let i = 1; i < sorted.length; i++) {
+    const gap = sorted[i]!.rowIndex - sorted[i - 1]!.rowIndex;
+    if (gap > maxGap) {
+      maxGap = gap;
+      splitAt = i;
+    }
+  }
+  if (splitAt <= 0 || splitAt >= sorted.length || maxGap <= 1) return 1;
+  return 2;
+}
+
+/** Ring-cut 144: two cylinders on one side — split into two visual cables. */
 function instanceCountForGroup(
   cable: string,
   fibers: LegFiberRef[],
@@ -136,8 +155,9 @@ function instanceCountForGroup(
   if (!isThroughCableName(cable)) return 1;
   if (fibers.length <= 2) return 1;
   const opposing = opposingLegIdsForFibers(graph, fibers);
-  if (opposing.size === 1 && fibers.length === 4) return 2;
-  return 1;
+  if (opposing.size !== 1) return 1;
+  if (fibers.length === 4) return 2;
+  return contiguousSplitCount(fibers);
 }
 
 function chunk<T>(items: T[], parts: number): T[][] {
@@ -150,7 +170,7 @@ function chunk<T>(items: T[], parts: number): T[][] {
   return out;
 }
 
-/** Even strand spacing inside one buffer tube; order follows fiber # not splice row. */
+/** Even strand spacing inside one buffer tube; one row per TIA fiber # at 24px pitch. */
 function compactTubeOffsets(fibers: LegFiberRef[]): Map<string, number> {
   const sorted = [...fibers].sort(
     (a, b) =>
@@ -162,6 +182,32 @@ function compactTubeOffsets(fibers: LegFiberRef[]): Map<string, number> {
     offsets.set(f.connectionId, index * FIBER_ROW_PITCH);
   });
   return offsets;
+}
+
+function dedupeTubeFibers(fibers: LegFiberRef[]): LegFiberRef[] {
+  const byNumber = new Map<number, LegFiberRef[]>();
+  for (const f of fibers) {
+    const fn = f.endpoint.fiberNumber;
+    const list = byNumber.get(fn) ?? [];
+    list.push(f);
+    byNumber.set(fn, list);
+  }
+  return [...byNumber.entries()]
+    .sort(([a], [b]) => a - b)
+    .map(([, refs]) =>
+      [...refs].sort((a, b) => a.rowIndex - b.rowIndex)[0]!,
+    );
+}
+
+function connectionIdsForTubeFiber(
+  fibers: LegFiberRef[],
+  primary: LegFiberRef,
+): string[] {
+  const fn = primary.endpoint.fiberNumber;
+  return fibers
+    .filter((f) => f.endpoint.fiberNumber === fn)
+    .sort((a, b) => a.rowIndex - b.rowIndex)
+    .map((f) => f.connectionId);
 }
 
 function buildTubes(fibers: LegFiberRef[]): VisualTube[] {
@@ -178,11 +224,7 @@ function buildTubes(fibers: LegFiberRef[]): VisualTube[] {
   for (const [tubeColor, tubeFibers] of [...byTube.entries()].sort(([a], [b]) =>
     compareTubeColorsTia(a, b),
   )) {
-    const sorted = [...tubeFibers].sort(
-      (a, b) =>
-        a.endpoint.fiberNumber - b.endpoint.fiberNumber ||
-        a.rowIndex - b.rowIndex,
-    );
+    const sorted = dedupeTubeFibers(tubeFibers);
     const compact = compactTubeOffsets(sorted);
     const maxCompact = sorted.reduce(
       (max, f) => Math.max(max, compact.get(f.connectionId) ?? 0),
@@ -191,16 +233,21 @@ function buildTubes(fibers: LegFiberRef[]): VisualTube[] {
 
     tubes.push({
       tubeColor,
-      fibers: sorted.map((f) => ({
-        connectionId: f.connectionId,
-        fiberNumber: f.endpoint.fiberNumber,
-        fiberColor: f.endpoint.fiberColor,
-        tubeColor: f.endpoint.tubeColor,
-        circuitName: f.circuitName,
-        handleId: `fiber-${f.connectionId}`,
-        rowIndex: f.rowIndex,
-        rowYOffset: tubeBaseOffset + (compact.get(f.connectionId) ?? 0),
-      })),
+      fibers: sorted.map((f) => {
+        const spliceConnectionIds = connectionIdsForTubeFiber(tubeFibers, f);
+        return {
+          connectionId: f.connectionId,
+          spliceConnectionIds:
+            spliceConnectionIds.length > 1 ? spliceConnectionIds : undefined,
+          fiberNumber: f.endpoint.fiberNumber,
+          fiberColor: f.endpoint.fiberColor,
+          tubeColor: f.endpoint.tubeColor,
+          circuitName: f.circuitName,
+          handleId: `fiber-${f.connectionId}`,
+          rowIndex: f.rowIndex,
+          rowYOffset: tubeBaseOffset + (compact.get(f.connectionId) ?? 0),
+        };
+      }),
     });
 
     if (sorted.length > 0) {
@@ -284,6 +331,16 @@ export function buildVisualCablesForLayout(graph: ConnectionGraph): {
   return { visualCables, dominant };
 }
 
+function fiberMatchesConnection(
+  fiber: VisualFiber,
+  connectionId: string,
+): boolean {
+  return (
+    fiber.connectionId === connectionId ||
+    fiber.spliceConnectionIds?.includes(connectionId) === true
+  );
+}
+
 export function findVisualCableForConnection(
   visualCables: VisualCable[],
   connectionId: string,
@@ -293,7 +350,7 @@ export function findVisualCableForConnection(
     if (options?.cable && vc.cable !== options.cable) return false;
     if (options?.canvasSide && vc.side !== options.canvasSide) return false;
     return vc.tubes.some((t) =>
-      t.fibers.some((f) => f.connectionId === connectionId),
+      t.fibers.some((f) => fiberMatchesConnection(f, connectionId)),
     );
   });
 }
@@ -331,7 +388,7 @@ export function endpointOnVisualSide(
   if (!vc) return null;
   const fiber = vc.tubes
     .flatMap((t) => t.fibers)
-    .find((f) => f.connectionId === conn.id);
+    .find((f) => fiberMatchesConnection(f, conn.id));
   if (!fiber) return null;
   return {
     visualCableId: vc.id,

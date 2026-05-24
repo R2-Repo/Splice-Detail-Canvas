@@ -1,4 +1,4 @@
-import { isFiberColorAbbrev, parseTubeColorCode, fiberNumberFromTubeAndColor } from "@/features/diagram/colorCode";
+import { isFiberColorAbbrev, parseTubeColorCode, fiberNumberFromTubeAndColor, fibersPerBufferTubeFromCableName } from "@/features/diagram/colorCode";
 import {
   cableNameKey,
   recordCableAppearance,
@@ -68,7 +68,7 @@ function stripDuplicateTrailingFields(parts: string[]): string[] {
   return p;
 }
 
-/** Last To-side column is OS when non-empty and not a fiber/device field. */
+/** Last To-side column is OS when non-empty and matches known OS patterns. */
 function isOsField(raw: string): boolean {
   const t = raw.trim();
   if (!t) return false;
@@ -76,6 +76,13 @@ function isOsField(raw: string): boolean {
   if (/^EL-\d+/i.test(t)) return true;
   if (t.startsWith("[")) return true;
   return false;
+}
+
+export function normalizeSectionMarker(line: string): "left" | "right" | null {
+  const normalized = line.trim().replace(/\s+/g, " ").toLowerCase();
+  if (normalized === "left ---") return "left";
+  if (normalized === "right ---") return "right";
+  return null;
 }
 
 /** Fixed tail after cable: fiber#, tube, fiber color, device [, OS]. */
@@ -144,6 +151,7 @@ function parseFromSide(
       device,
       cable,
       fiberNumber: parseFiberNumber(fiberNumRaw),
+      fiberNumberSource: fiberNumRaw.trim() ? "csv" : undefined,
       tubeColor,
       fiberColor: fiberColor as FiberColorAbbrev,
       csvColumn,
@@ -212,6 +220,7 @@ function parseToSide(
       device,
       cable,
       fiberNumber: parseFiberNumber(fiberNumRaw),
+      fiberNumberSource: fiberNumRaw.trim() ? "csv" : undefined,
       tubeColor,
       fiberColor: fiberColor as FiberColorAbbrev,
       csvColumn,
@@ -223,22 +232,39 @@ function fillMissingFiberNumber(
   ep: FiberEndpoint,
   peer: FiberEndpoint,
 ): FiberEndpoint {
-  if (Number.isFinite(ep.fiberNumber)) return ep;
-
-  if (ep.tubeColor === peer.tubeColor && Number.isFinite(peer.fiberNumber)) {
-    return { ...ep, fiberNumber: peer.fiberNumber };
+  if (Number.isFinite(ep.fiberNumber)) {
+    return { ...ep, fiberNumberSource: ep.fiberNumberSource ?? "csv" };
   }
 
-  const inferred = fiberNumberFromTubeAndColor(ep.tubeColor, ep.fiberColor);
+  const fibersPerTube = fibersPerBufferTubeFromCableName(ep.cable);
+
+  // Same-tube blank fiber#: Bentley crossover rows keep peer index (Example #1).
+  if (ep.tubeColor === peer.tubeColor && Number.isFinite(peer.fiberNumber)) {
+    return {
+      ...ep,
+      fiberNumber: peer.fiberNumber,
+      fiberNumberSource: "peer-copy",
+    };
+  }
+
+  const inferred = fiberNumberFromTubeAndColor(
+    ep.tubeColor,
+    ep.fiberColor,
+    fibersPerTube,
+  );
   if (Number.isFinite(inferred)) {
-    return { ...ep, fiberNumber: inferred };
+    return { ...ep, fiberNumber: inferred, fiberNumberSource: "inferred" };
   }
 
   if (Number.isFinite(peer.fiberNumber)) {
-    return { ...ep, fiberNumber: peer.fiberNumber };
+    return {
+      ...ep,
+      fiberNumber: peer.fiberNumber,
+      fiberNumberSource: "peer-copy",
+    };
   }
 
-  return ep;
+  return { ...ep, fiberNumberSource: "missing" };
 }
 
 function normalizePairEndpoints(
@@ -336,7 +362,7 @@ export function endpointKey(ep: FiberEndpoint): string {
   ].join("|");
 }
 
-/** Physical fiber identity — ignores CSV column and remote device. */
+/** Physical fiber identity — ignores CSV column and remote device (used for mirror dedupe). */
 export function logicalEndpointKey(ep: FiberEndpoint): string {
   return [
     ep.cable,
@@ -344,6 +370,11 @@ export function logicalEndpointKey(ep: FiberEndpoint): string {
     ep.tubeColor,
     ep.fiberColor,
   ].join("|");
+}
+
+/** Cable-leg-scoped fiber identity — includes csvColumn for through-cable leg disambiguation. */
+export function legEndpointKey(ep: FiberEndpoint): string {
+  return [logicalEndpointKey(ep), ep.csvColumn].join("|");
 }
 
 export function pairKey(a: FiberEndpoint, b: FiberEndpoint): string {
@@ -385,12 +416,9 @@ function parseSectionRows(
     lineNumber += 1;
     const line = rawLine.trim();
     if (!line) continue;
-    if (line === "Left ---") {
-      section = "left";
-      continue;
-    }
-    if (line === "Right ---") {
-      section = "right";
+    const marker = normalizeSectionMarker(line);
+    if (marker) {
+      section = marker;
       continue;
     }
     if (section !== target || !line.includes("<->")) continue;
@@ -406,24 +434,23 @@ function scanCableAppearances(
 ): Map<string, CableAppearanceSummary> {
   const map = new Map<string, CableAppearanceSummary>();
   let section: "left" | "right" | null = null;
+  let lineNumber = 0;
 
   for (const rawLine of lines) {
+    lineNumber += 1;
     const line = rawLine.trim();
     if (!line) continue;
-    if (line === "Left ---") {
-      section = "left";
-      continue;
-    }
-    if (line === "Right ---") {
-      section = "right";
+    const marker = normalizeSectionMarker(line);
+    if (marker) {
+      section = marker;
       continue;
     }
     if (!line.includes("<->") || section === null) continue;
 
-    const pair = parseDataRow(line, section);
-    if (!pair) continue;
-    recordCableAppearance(map, pair.endpointA, "from", section);
-    recordCableAppearance(map, pair.endpointB, "to", section);
+    const result = parseDataRowWithResult(line, lineNumber, section);
+    if (!result.ok) continue;
+    recordCableAppearance(map, result.pair.endpointA, "from", section);
+    recordCableAppearance(map, result.pair.endpointB, "to", section);
   }
 
   return map;
@@ -447,7 +474,7 @@ export function parseBentleyCsv(csvText: string): SpliceReport {
     header,
     pairs,
     cableAppearances: [...cableAppearances.values()],
-    leftRowResults: [...leftResults, ...rightResults],
+    rowResults: [...leftResults, ...rightResults],
   };
 }
 

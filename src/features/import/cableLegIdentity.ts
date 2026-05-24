@@ -1,5 +1,12 @@
 import type { CsvColumnRole, FiberEndpoint, SplicePair } from "@/types/splice";
 
+import {
+  pickBestSideAssignment,
+  mirrorSideAssignment,
+  scoreCableSideAssignment,
+  compareSideAssignments,
+} from "@/features/diagram/layoutScoring";
+
 export type SectionColumnCounts = { from: number; to: number };
 
 /** From/To appearance counts per cable in Left --- vs Right --- sections. */
@@ -37,15 +44,71 @@ export function recordCableAppearance(
 
 const MAX_EXHAUSTIVE_CABLES = 14;
 
+function cloneSideMap(
+  sides: Map<string, "left" | "right">,
+): Map<string, "left" | "right"> {
+  return new Map(sides);
+}
+
+function fiberCountForCable(pairs: SplicePair[], cable: string): number {
+  let count = 0;
+  for (const pair of pairs) {
+    for (const ep of [pair.endpointA, pair.endpointB]) {
+      if (cableNameKey(ep.cable) === cableNameKey(cable)) count += 1;
+    }
+  }
+  return count;
+}
+
+function biggestCableFirstSides(
+  cables: string[],
+  base: Map<string, "left" | "right">,
+  pairs: SplicePair[],
+): Map<string, "left" | "right"> {
+  const sorted = [...cables].sort(
+    (a, b) => fiberCountForCable(pairs, b) - fiberCountForCable(pairs, a),
+  );
+  const sides = cloneSideMap(base);
+  sorted.forEach((cable, index) => {
+    sides.set(cable, index % 2 === 0 ? "left" : "right");
+  });
+  return sides;
+}
+
+function pickBestSideFromCandidates(
+  seeds: Map<string, "left" | "right">[],
+  pairs: SplicePair[],
+): Map<string, "left" | "right"> {
+  const candidates: Map<string, "left" | "right">[] = [];
+  const seen = new Set<string>();
+  const add = (map: Map<string, "left" | "right">) => {
+    const key = [...map.entries()]
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([k, v]) => `${k}:${v}`)
+      .join("|");
+    if (seen.has(key)) return;
+    seen.add(key);
+    candidates.push(map);
+  };
+
+  for (const seed of seeds) {
+    add(cloneSideMap(seed));
+    add(mirrorSideAssignment(seed));
+    const cables = [...seed.keys()].sort((a, b) => a.localeCompare(b));
+    add(biggestCableFirstSides(cables, seed, pairs));
+  }
+
+  return pickBestSideAssignment(candidates, pairs);
+}
+
 /**
  * One canvas side per physical cable for node placement.
- * Maximizes opposite-side pair weight; tie-breaks with From→left preference.
+ * Minimizes same-side pairs (hard-prefer zero) then crossings; tie-breaks with From→left preference.
  */
 export function computeCableCanvasSides(
   pairs: SplicePair[],
 ): Map<string, "left" | "right"> {
   const counts = new Map<string, { from: number; to: number }>();
-  const pairWeight = new Map<string, number>();
 
   for (const pair of pairs) {
     for (const ep of [pair.endpointA, pair.endpointB]) {
@@ -54,12 +117,6 @@ export function computeCableCanvasSides(
       tally[ep.csvColumn] += 1;
       counts.set(key, tally);
     }
-
-    const a = pair.endpointA.cable;
-    const b = pair.endpointB.cable;
-    if (a === b) continue;
-    const edgeKey = [a, b].sort().join("\0");
-    pairWeight.set(edgeKey, (pairWeight.get(edgeKey) ?? 0) + 1);
   }
 
   const cables = [...counts.keys()].sort((a, b) => a.localeCompare(b));
@@ -69,51 +126,36 @@ export function computeCableCanvasSides(
     return tally.from >= tally.to ? "left" : "right";
   }
 
-  function oppositeWeight(sides: Map<string, "left" | "right">): number {
-    let score = 0;
-    for (const [edgeKey, weight] of pairWeight) {
-      const [a, b] = edgeKey.split("\0");
-      if (sides.get(a) !== sides.get(b)) score += weight;
-    }
-    return score;
-  }
-
-  function preferenceScore(sides: Map<string, "left" | "right">): number {
-    let score = 0;
-    for (const cable of cables) {
-      if (sides.get(cable) === preferredSide(cable)) score += 1;
-    }
-    return score;
-  }
-
   if (cables.length === 0) return new Map();
 
   if (cables.length <= MAX_EXHAUSTIVE_CABLES) {
-    let best = new Map<string, "left" | "right">();
-    let bestWeight = -1;
-    let bestPref = -1;
+    let bestScored: ReturnType<typeof scoreCableSideAssignment> | null = null;
+    let tied: Map<string, "left" | "right">[] = [];
 
     for (let mask = 0; mask < 1 << cables.length; mask++) {
       const sides = new Map<string, "left" | "right">();
       cables.forEach((cable, index) => {
         sides.set(cable, (mask >> index) & 1 ? "right" : "left");
       });
-      const weight = oppositeWeight(sides);
-      const pref = preferenceScore(sides);
-      if (weight > bestWeight || (weight === bestWeight && pref > bestPref)) {
-        bestWeight = weight;
-        bestPref = pref;
-        best = sides;
+      const scored = scoreCableSideAssignment(pairs, sides);
+      if (
+        !bestScored ||
+        compareSideAssignments(scored, bestScored) < 0
+      ) {
+        bestScored = scored;
+        tied = [new Map(sides)];
+      } else if (bestScored && compareSideAssignments(scored, bestScored) === 0) {
+        tied.push(new Map(sides));
       }
     }
-    return best;
+    return tied.length === 1 ? tied[0]! : pickBestSideFromCandidates(tied, pairs);
   }
 
   const sides = new Map<string, "left" | "right">();
   for (const cable of cables) {
     sides.set(cable, preferredSide(cable));
   }
-  return sides;
+  return pickBestSideFromCandidates([sides], pairs);
 }
 
 /**

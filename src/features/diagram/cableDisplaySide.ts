@@ -3,8 +3,11 @@ import { LAYOUT } from "@/features/diagram/layoutSpliceDiagram";
 import type { VisualCable } from "@/features/diagram/visualCables";
 
 /** Canvas X threshold: node position left of center → left-facing cable. */
-export function displaySideFromCanvasX(x: number): "left" | "right" {
-  return x < LAYOUT.centerX ? "left" : "right";
+export function displaySideFromCanvasX(
+  x: number,
+  centerX: number = LAYOUT.centerX,
+): "left" | "right" {
+  return x < centerX ? "left" : "right";
 }
 
 export function visualCableIdFromNodeId(nodeId: string): string | null {

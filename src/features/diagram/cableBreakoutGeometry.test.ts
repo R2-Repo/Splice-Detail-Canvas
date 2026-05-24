@@ -4,6 +4,7 @@ import {
   computeCableBreakout,
   computeDiagramScale,
   computeSheathSize,
+  computeSideStemAlignment,
   SHEATH_SIZE,
 } from "./cableBreakoutGeometry";
 import type { VisualTube } from "./visualCables";
@@ -164,6 +165,48 @@ describe("computeCableBreakout", () => {
     );
     expect(two.stemX - two.sheath.width).toBeGreaterThan(
       one.stemX - one.sheath.width,
+    );
+  });
+
+  it("aligns fiber stem X when alignedStemX exceeds natural reach", () => {
+    const sparse = [
+      mockTube("BL", [{ rowIndex: 0, handleId: "f0", fiberColor: "BL" }]),
+    ];
+    const dense = [
+      mockTube("BL", [{ rowIndex: 0, handleId: "f0", fiberColor: "BL" }]),
+      mockTube("OR", [{ rowIndex: 4, handleId: "f1", fiberColor: "OR" }]),
+      mockTube("GR", [{ rowIndex: 8, handleId: "f2", fiberColor: "GR" }]),
+    ];
+    const align = computeSideStemAlignment(
+      [
+        { tubes: sparse, side: "left" },
+        { tubes: dense, side: "left" },
+      ],
+      40,
+      56,
+      18,
+    );
+    const sparseGeo = computeCableBreakout(
+      sparse,
+      "left",
+      40,
+      56,
+      18,
+      1,
+      align.left,
+    );
+    const denseGeo = computeCableBreakout(
+      dense,
+      "left",
+      40,
+      56,
+      18,
+      1,
+      align.left,
+    );
+    expect(sparseGeo.stemX).toBe(denseGeo.stemX);
+    expect(sparseGeo.tubes[0]!.end.x).toBeGreaterThan(
+      computeCableBreakout(sparse, "left", 40, 56, 18).tubes[0]!.end.x,
     );
   });
 

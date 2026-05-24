@@ -1,4 +1,7 @@
 import type { VisualCable } from "@/features/diagram/visualCables";
+import {
+  computeCableBreakout,
+} from "@/features/diagram/cableBreakoutGeometry";
 
 /**
  * Center-to-center spacing between adjacent fiber splice lines within one buffer tube (px).
@@ -17,6 +20,51 @@ export const FIBERS_PER_BUFFER_TUBE = 12;
 
 /** Center spacing between adjacent vertical splice legs — same as row pitch. */
 export const SPLICE_LANE_SEP = MIN_FIBER_LINE_GAP;
+
+/** Margin inside cable handles before splice lanes are placed (see spliceEdgeRouting). */
+export const SPLICE_ROUTING_END_MARGIN = 16;
+
+/** Minimum horizontal run toward diagram center before same-side splices turn vertical. */
+export const SAME_SIDE_CENTER_INSET = MIN_FIBER_LINE_GAP;
+
+/**
+ * Horizontal jog toward diagram center after the OS/circuit label column.
+ * Total run from handle = side circuit label span + this value.
+ */
+export const MIN_SPLICE_HORIZONTAL_INSET = 60;
+
+/** Fiber row layout — keep in sync with splice-diagram.css */
+export const FIBER_ROW_SWATCH_WIDTH = 36;
+export const FIBER_ROW_INNER_GAP = 5;
+export const FIBER_ROW_CODE_MIN_WIDTH = 20;
+export const FIBER_CIRCUIT_MAX_WIDTH = 88;
+
+/** Handle → start of circuit tag text (swatch + code + gaps). */
+export function fiberRowPrefixWidth(): number {
+  return (
+    FIBER_ROW_SWATCH_WIDTH +
+    FIBER_ROW_INNER_GAP +
+    FIBER_ROW_CODE_MIN_WIDTH +
+    FIBER_ROW_INNER_GAP
+  );
+}
+
+/**
+ * Minimum horizontal gap between cable columns so splice lanes keep 24px rhythm
+ * (including buffer-tube boundary steps from row offsets).
+ */
+export function minCenterGapForRowSpan(
+  maxRowOffset: number,
+  laneCount: number,
+): number {
+  const minFromOffsets = maxRowOffset + 2 * SPLICE_ROUTING_END_MARGIN;
+  const minFromLanes =
+    laneCount <= 1
+      ? 200
+      : Math.max(200, (laneCount - 1) * SPLICE_LANE_SEP) +
+        2 * SPLICE_ROUTING_END_MARGIN;
+  return Math.max(minFromOffsets, minFromLanes);
+}
 
 export const CABLE_LAYOUT = {
   width: 1400,
@@ -47,6 +95,24 @@ export function cableXForSide(
   const leftX = bounds?.leftX ?? CABLE_LAYOUT.leftX;
   const rightX = bounds?.rightX ?? CABLE_LAYOUT.rightX;
   return side === "left" ? leftX : rightX;
+}
+
+/**
+ * After drag: keep release X unless near the side column (magnetic snap).
+ * Lets outward / custom spread stick while preserving column alignment on release near the edge.
+ */
+export function resolveCableDragStopX(
+  draggedX: number,
+  side: "left" | "right",
+  bounds: CableXBounds,
+  snapThreshold = CABLE_LAYOUT.fiberRowH,
+): number {
+  const columnX = cableXForSide(side, 1, bounds);
+  const clamped = Math.min(Math.max(draggedX, bounds.leftX), bounds.rightX);
+  if (Math.abs(clamped - columnX) <= snapThreshold) {
+    return columnX;
+  }
+  return clamped;
 }
 
 export function fiberRowY(rowIndex: number, baseTop = CABLE_LAYOUT.topY): number {
@@ -116,4 +182,20 @@ export function visualCableHeight(vc: VisualCable): number {
     CABLE_LAYOUT.fiberRowH +
     CABLE_LAYOUT.tubeGap
   );
+}
+
+/** Layout/render height — max of compact row math and breakout SVG bounds. */
+export function cableNodeLayoutHeight(
+  vc: VisualCable,
+  scale = 1,
+): number {
+  const geo = computeCableBreakout(
+    vc.tubes,
+    vc.side,
+    FIBER_ROW_PITCH,
+    CABLE_LAYOUT.headerH,
+    CABLE_LAYOUT.tubeLabelH,
+    scale,
+  );
+  return Math.max(visualCableHeight(vc), geo.viewHeight);
 }

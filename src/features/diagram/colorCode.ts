@@ -43,14 +43,23 @@ export function fiberNumberToColorIndex(fiberNumber: number): number {
   return ((fiberNumber - 1) % 12) + 1;
 }
 
+export function fibersPerBufferTubeFromCableName(cable: string): 6 | 12 {
+  if (/\bDK-?6\b/i.test(cable) || /\b6[\s-]?(DROP|SMF|COUNT)/i.test(cable)) {
+    return 6;
+  }
+  return 12;
+}
+
 export function fiberNumberFromTubeAndColor(
   tubeColor: TubeColorCode,
   fiberColor: FiberColorAbbrev,
+  fibersPerTube: 6 | 12 = 12,
 ): number {
   const tubeIndex = TIA_TUBE_ORDER.indexOf(tubeColor);
   const colorIndex = TIA_12_COLORS.findIndex((c) => c.abbrev === fiberColor);
   if (tubeIndex === -1 || colorIndex === -1) return Number.NaN;
-  return tubeIndex * 12 + colorIndex + 1;
+  if (fibersPerTube === 6 && colorIndex >= 6) return Number.NaN;
+  return tubeIndex * fibersPerTube + colorIndex + 1;
 }
 
 export function fiberNumberToAbbrev(fiberNumber: number): FiberColorAbbrev {
@@ -124,4 +133,15 @@ export function colorHex(abbrev: FiberColorAbbrev): string {
 export function colorName(abbrev: FiberColorAbbrev): string {
   const def = TIA_12_COLORS.find((c) => c.abbrev === abbrev);
   return def?.name ?? abbrev;
+}
+
+/** Dark edge on light TIA colors so strands/tubes stay visible on white canvas. */
+export const FIBER_CONTRAST_OUTLINE = "rgba(0, 0, 0, 0.4)";
+
+export function needsFiberContrastOutline(abbrev: FiberColorAbbrev): boolean {
+  return abbrev === "WH";
+}
+
+export function needsFiberContrastOutlineHex(hex: string): boolean {
+  return hex.toLowerCase() === colorHex("WH").toLowerCase();
 }

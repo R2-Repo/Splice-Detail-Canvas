@@ -4,7 +4,7 @@ import {
   PARSE_REASON_LABELS,
   type ParseRowFailureReason,
 } from "@/features/import/parseReasons";
-import { parseBentleyCsv } from "@/features/import/parseBentleyCsv";
+import { parseBentleyCsv, normalizeSectionMarker } from "@/features/import/parseBentleyCsv";
 
 export type FailureBreakdown = {
   reason: ParseRowFailureReason;
@@ -35,12 +35,9 @@ function countSectionRows(csv: string, section: "left" | "right"): number {
   let count = 0;
   for (const raw of csv.split(/\r?\n/)) {
     const line = raw.trim();
-    if (line === "Left ---") {
-      active = section === "left";
-      continue;
-    }
-    if (line === "Right ---") {
-      active = section === "right";
+    const marker = normalizeSectionMarker(line);
+    if (marker) {
+      active = section === marker;
       continue;
     }
     if (active && line.includes("<->")) count += 1;
@@ -83,7 +80,7 @@ export function inspectBentleyCsv(csvText: string): CsvInspectReport {
   const graph = buildConnectionGraph(report);
   const rawLeft = countSectionRows(csvText, "left");
   const rawRight = countSectionRows(csvText, "right");
-  const leftResults = report.leftRowResults ?? [];
+  const rowResults = report.rowResults ?? [];
   const warnings: string[] = [];
 
   const parseGap = rawLeft - report.pairs.length;
@@ -104,7 +101,17 @@ export function inspectBentleyCsv(csvText: string): CsvInspectReport {
     }
   }
 
-  const failureBreakdown = buildFailureBreakdown(leftResults);
+  const failureBreakdown = buildFailureBreakdown(rowResults);
+
+  const inferred = (report.rowResults ?? []).filter(
+    (r) =>
+      r.ok &&
+      (r.pair.endpointA.fiberNumberSource === "inferred" ||
+        r.pair.endpointB.fiberNumberSource === "inferred"),
+  ).length;
+  if (inferred > 0) {
+    warnings.push(`${inferred} row(s) used inferred fiber numbers.`);
+  }
 
   return {
     header: report.header,
@@ -135,7 +142,7 @@ export function formatInspectReport(inspection: CsvInspectReport): string {
   ];
 
   if (inspection.failureBreakdown.length) {
-    lines.push("Parse failures (Left section):");
+    lines.push("Parse failures (Left + Right sections):");
     for (const f of inspection.failureBreakdown) {
       lines.push(`  • ${f.label}: ${f.count}`);
       for (const s of f.samples) lines.push(`      e.g. ${s}…`);

@@ -42,8 +42,11 @@ export function connectionsInRowLayoutOrder(
   graph: ConnectionGraph,
   visualCables?: RowLayoutVisualCableRef[],
   dominant?: DominantCablePair | null,
+  excludeConnectionIds?: ReadonlySet<string>,
 ): FiberConnection[] {
-  const list = orderedFiberConnections(graph);
+  const list = orderedFiberConnections(graph).filter(
+    (c) => !excludeConnectionIds?.has(c.id),
+  );
   const index = new Map(list.map((c, i) => [c.id, i]));
   return [...list].sort((a, b) => {
     if (dominant && visualCables) {
@@ -222,13 +225,17 @@ export function connectionRowIndexMap(
   graph: ConnectionGraph,
   visualCables?: RowLayoutVisualCableRef[],
   dominant?: DominantCablePair | null,
+  excludeConnectionIds?: ReadonlySet<string>,
 ): Map<string, number> {
   const map = new Map<string, number>();
-  connectionsInRowLayoutOrder(graph, visualCables, dominant).forEach(
-    (conn, index) => {
-      map.set(conn.id, index);
-    },
-  );
+  connectionsInRowLayoutOrder(
+    graph,
+    visualCables,
+    dominant,
+    excludeConnectionIds,
+  ).forEach((conn, index) => {
+    map.set(conn.id, index);
+  });
   return map;
 }
 
@@ -240,12 +247,14 @@ export function connectionRowOffsets(
   graph: ConnectionGraph,
   visualCables?: RowLayoutVisualCableRef[],
   dominant?: DominantCablePair | null,
+  excludeConnectionIds?: ReadonlySet<string>,
 ): Map<string, number> {
   const map = new Map<string, number>();
   const connections = connectionsInRowLayoutOrder(
     graph,
     visualCables,
     dominant,
+    excludeConnectionIds,
   );
   let y = 0;
 
@@ -263,4 +272,14 @@ export function connectionRowOffsets(
   }
 
   return map;
+}
+
+export function maxConnectionRowOffset(
+  rowOffsets: ReadonlyMap<string, number>,
+): number {
+  let max = 0;
+  for (const offset of rowOffsets.values()) {
+    if (offset > max) max = offset;
+  }
+  return max;
 }

@@ -35,9 +35,8 @@ describe("connectionRowOffsets", () => {
       ),
     );
     const rowIdx = connectionRowIndexMap(graph);
-    const vc = buildVisualCables(graph).find(
-      (v) => v.side === "right" && v.cable.includes("24 DIST"),
-    );
+    const vc = buildVisualCables(graph).find((v) => v.cable.includes("24 DIST"));
+    expect(vc, "24 DIST visual cable").toBeDefined();
     const bl = vc!.tubes.find((t) => t.tubeColor === "BL")!;
     const byColor = Object.fromEntries(
       bl.fibers.map((f) => [f.fiberColor, rowIdx.get(f.connectionId)]),
