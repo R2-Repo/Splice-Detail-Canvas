@@ -5,6 +5,7 @@ import {
   smfoLabelForCable,
 } from "@/features/diagram/cableLabels";
 import {
+  computeCableBreakout,
   computeDiagramScale,
   computeSideStemAlignment,
 } from "@/features/diagram/cableBreakoutGeometry";
@@ -208,10 +209,22 @@ export function buildReactFlowGraph(
     const collapsedTubes = collapseFullButtSplices
       ? collapsedTubeColorsForVisualCable(vc, resolvedButtSplices)
       : undefined;
+    const alignedStemX = sideStemAlign[vc.side];
+    const breakout = computeCableBreakout(
+      vc.tubes,
+      vc.side,
+      CABLE_LAYOUT.fiberRowH,
+      CABLE_LAYOUT.headerH,
+      CABLE_LAYOUT.tubeLabelH,
+      diagramScale,
+      alignedStemX,
+    );
     nodes.push({
       id: nodeId,
       type: "cable",
       position: pos,
+      width: breakout.viewWidth,
+      height: breakout.viewHeight,
       data: {
         smfoLabel: smfoLabelForCable(vc.cable),
         label: vc.cable,
@@ -221,7 +234,7 @@ export function buildReactFlowGraph(
         nodeHeight: nodeHeightForVisualCable(vc, collapsedTubes),
         fiberPitch: CABLE_LAYOUT.fiberRowH,
         diagramScale,
-        alignedStemX: sideStemAlign[vc.side],
+        alignedStemX,
         spliceNumber: graph.report.header.spliceNumber,
         collapsedTubes,
       } satisfies CableNodeData,

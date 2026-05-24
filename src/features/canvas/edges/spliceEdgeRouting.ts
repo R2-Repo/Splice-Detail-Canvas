@@ -4,6 +4,7 @@ import {
   SPLICE_LANE_SEP,
   SPLICE_ROUTING_END_MARGIN,
   MIN_SPLICE_HORIZONTAL_INSET,
+  MIN_HORIZONTAL_INSET_FLOOR,
   fiberRowPrefixWidth,
   CABLE_LAYOUT,
   FIBER_ROW_PITCH,
@@ -171,17 +172,6 @@ export function spliceMidXInsetBounds(
   return { lo, hi };
 }
 
-/** @deprecated use spliceMidXInsetBounds with side circuit spans */
-export function minHorizontalInsetBounds(
-  sourceX: number,
-  targetX: number,
-  minInset = MIN_SPLICE_HORIZONTAL_INSET,
-): { lo: number; hi: number } {
-  const spans = defaultSideCircuitLabelSpan();
-  const centerX = (sourceX + targetX) / 2;
-  return spliceMidXInsetBounds(sourceX, targetX, centerX, spans, minInset);
-}
-
 export function sourceHorizontalLeg(midX: number, sourceX: number): number {
   return Math.abs(midX - sourceX);
 }
@@ -212,16 +202,23 @@ export function clampMidXForMinHorizontalInset(
   sideSpans: SideCircuitLabelSpan = defaultSideCircuitLabelSpan(),
   jog = MIN_SPLICE_HORIZONTAL_INSET,
 ): number {
-  const { lo, hi } = spliceMidXInsetBounds(
-    sourceX,
-    targetX,
-    diagramCenterX,
-    sideSpans,
-    jog,
-  );
-  if (lo > hi + SPLICE_PATH_EPS) {
-    return (sourceX + targetX) / 2;
+  for (
+    let attempt = jog;
+    attempt >= MIN_HORIZONTAL_INSET_FLOOR;
+    attempt -= 8
+  ) {
+    const { lo, hi } = spliceMidXInsetBounds(
+      sourceX,
+      targetX,
+      diagramCenterX,
+      sideSpans,
+      attempt,
+    );
+    if (lo <= hi + SPLICE_PATH_EPS) {
+      return Math.max(lo, Math.min(hi, midX));
+    }
   }
+  const { lo, hi } = spliceRoutingBounds(sourceX, targetX);
   return Math.max(lo, Math.min(hi, midX));
 }
 
@@ -648,7 +645,12 @@ function bundleJogXForMembers(
   const inwardIsIncreasingX =
     inwardSignForColumn(sourceX, diagramCenterX) > 0;
   const midXs = members.map((member) => member.midX);
-  return inwardIsIncreasingX ? Math.max(...midXs) : Math.min(...midXs);
+  // Trunk = least-inward midX (closest to source). Strands fan from trunk
+  // OUTWARD toward their own midX, in the same direction as the source-side H.
+  // The fan-out collapses visually with the main H into one clean elbow.
+  // Inverting this (trunk = most-inward) creates a "loop-back" where strands
+  // overshoot their target X then double back.
+  return inwardIsIncreasingX ? Math.min(...midXs) : Math.max(...midXs);
 }
 
 /** Group edges that share the same cable-column routing span. */
@@ -786,6 +788,14 @@ export function packMidXLanes(
   minSep = SPLICE_LANE_SEP,
   diagramCenterX?: number,
   sideSpans: SideCircuitLabelSpan = defaultSideCircuitLabelSpan(),
+  /**
+   * Optional global max row offset across the diagram. Cross-side packing
+   * uses it to anchor each zone's bundle at its row-offset-proportional
+   * position along the routing span, so zones with low row offsets sit
+   * near source and zones with high row offsets sit near target. Defaults
+   * to the per-zone max (back-compat for direct callers/tests).
+   */
+  globalMaxRowOffset?: number,
 ): Map<string, number> {
   const result = new Map<string, number>();
   if (candidates.length === 0) return result;
@@ -852,9 +862,39 @@ export function packMidXLanes(
   const packLo = insetLo <= insetHi ? insetLo : lo;
   const packHi = insetLo <= insetHi ? insetHi : hi;
   const packSpan = Math.max(0, packHi - packLo);
-  const sep = Math.max(minSep, packSpan / (laneCount - 1));
+
+  // Tight 24px bundle — keeps grouped strands visually together.
+  const sep = minSep;
   const totalSpan = (laneCount - 1) * sep;
-  const start = packLo + Math.max(0, (packSpan - totalSpan) / 2);
+
+  // Anchor at the median ROW-OFFSET-PROPORTIONAL ideal midX. Each strand's
+  // ideal sits at sourceX + (targetX - sourceX) * (rowOffset / globalMax),
+  // so bundles with low row offsets (top tubes/cables) anchor near source
+  // and bundles with high row offsets (bottom tubes/cables) anchor near
+  // target. The full center span gets used; bundles spread across the
+  // canvas instead of all crowding the band midpoint.
+  const localMax = candidates.reduce(
+    (m, c) => Math.max(m, c.rowOffset),
+    0,
+  );
+  const maxRowOffsetForIdeal = Math.max(globalMaxRowOffset ?? 0, localMax);
+  const idealMidXs = candidates.map((c) =>
+    idealSpliceMidXFromRowOffset(c, maxRowOffsetForIdeal),
+  );
+  const sortedIdeals = [...idealMidXs].sort((a, b) => a - b);
+  let medianIdeal: number;
+  if (sortedIdeals.length === 0) {
+    medianIdeal = (packLo + packHi) / 2;
+  } else if (sortedIdeals.length % 2 === 0) {
+    const mid = sortedIdeals.length / 2;
+    medianIdeal = (sortedIdeals[mid - 1]! + sortedIdeals[mid]!) / 2;
+  } else {
+    medianIdeal = sortedIdeals[Math.floor(sortedIdeals.length / 2)]!;
+  }
+  const startUnclamped = medianIdeal - totalSpan / 2;
+  const startMin = packLo;
+  const startMax = packLo + Math.max(0, packSpan - totalSpan);
+  const start = Math.min(Math.max(startUnclamped, startMin), startMax);
 
   for (let i = 0; i < upwardOrdered.length; i++) {
     const raw = start + i * sep;
@@ -887,6 +927,37 @@ export function packMidXLanes(
   return result;
 }
 
+function enforceDistinctMidXLanes(
+  result: Map<string, number>,
+  candidates: MidXLaneCandidate[],
+  minSep: number,
+): void {
+  // Per-zone pass first: keeps row-offset order intact within each zone.
+  const byZone = new Map<string, MidXLaneCandidate[]>();
+  for (const candidate of candidates) {
+    const key = spliceRoutingZoneKey(candidate.sourceX, candidate.targetX);
+    const list = byZone.get(key) ?? [];
+    list.push(candidate);
+    byZone.set(key, list);
+  }
+
+  for (const group of byZone.values()) {
+    const sorted = [...group].sort(
+      (a, b) => (result.get(a.id) ?? 0) - (result.get(b.id) ?? 0),
+    );
+    let prevMid = sorted[0] ? result.get(sorted[0].id)! : 0;
+    for (let i = 1; i < sorted.length; i++) {
+      const id = sorted[i]!.id;
+      let mid = result.get(id)!;
+      if (mid - prevMid < minSep - SPLICE_PATH_EPS) {
+        mid = prevMid + minSep;
+        result.set(id, mid);
+      }
+      prevMid = mid;
+    }
+  }
+}
+
 /** Packed midX per cable-column zone — enforces MIN_FIBER_LINE_GAP in center lanes. */
 export function assignSpliceMidXLanes(
   candidates: MidXLaneCandidate[],
@@ -901,16 +972,156 @@ export function assignSpliceMidXLanes(
     byZone.set(key, list);
   }
 
+  // Global max row offset across all candidates — threaded into per-zone
+  // packing so each zone's bundle anchors at its row-offset-proportional
+  // position along the routing span (zones with low row offsets sit near
+  // source; high row offsets sit near target).
+  const globalMaxRowOffset = candidates.reduce(
+    (m, c) => Math.max(m, c.rowOffset),
+    0,
+  );
+
   const result = new Map<string, number>();
   for (const group of byZone.values()) {
-    for (const [id, midX] of packMidXLanes(
+    const packed = packMidXLanes(
       group,
       SPLICE_LANE_SEP,
       diagramCenterX,
       sideSpans,
-    )) {
+      globalMaxRowOffset,
+    );
+    enforceDistinctMidXLanes(packed, group, SPLICE_LANE_SEP);
+    for (const [id, midX] of packed) {
       result.set(id, midX);
     }
+  }
+  return result;
+}
+
+function verticalSpanOverlaps(
+  y0A: number,
+  y1A: number,
+  y0B: number,
+  y1B: number,
+): boolean {
+  const loA = Math.min(y0A, y1A);
+  const hiA = Math.max(y0A, y1A);
+  const loB = Math.min(y0B, y1B);
+  const hiB = Math.max(y0B, y1B);
+  return loA <= hiB + SPLICE_PATH_EPS && loB <= hiA + SPLICE_PATH_EPS;
+}
+
+/**
+ * EDGE-012: offset midX when vertical legs would stack on the same X track.
+ *
+ * Global pass — vertical legs from different routing zones can land at the
+ * same X with overlapping Y spans on busy multi-cable diagrams. A single
+ * occupied ledger across all candidates prevents cross-zone vertical stack-up.
+ */
+function assignSideVertLaneXs(
+  candidates: MidXLaneCandidate[],
+  lanes: Map<string, SpliceRoutingLane>,
+): void {
+  const eligible = candidates.filter((c) => lanes.has(c.id));
+  eligible.sort(
+    (a, b) =>
+      a.rowOffset - b.rowOffset ||
+      a.sourceY - b.sourceY ||
+      a.targetY - b.targetY ||
+      a.id.localeCompare(b.id),
+  );
+  const diagramCenterX = globalDiagramCenterX(candidates);
+  const occupied: Array<{ x: number; y0: number; y1: number }> = [];
+
+  for (const candidate of eligible) {
+    const lane = lanes.get(candidate.id)!;
+    const srcHY = lane.sourceHorizY ?? candidate.sourceY;
+    const tgtHY = lane.targetHorizY ?? candidate.targetY;
+    const spliceY = (candidate.sourceY + candidate.targetY) / 2;
+    const y0 = Math.min(srcHY, spliceY, tgtHY);
+    const y1 = Math.max(srcHY, spliceY, tgtHY);
+    const inward =
+      inwardSignForColumn(
+        (candidate.sourceX + candidate.targetX) / 2,
+        diagramCenterX,
+      ) > 0
+        ? 1
+        : -1;
+
+    // Strand's own inset-feasible band — V deconflict must NEVER push midX
+    // outside this band. Pushing past targetX creates a reverse-H loop-back
+    // (the regression seen on the aqua strand).
+    const insetBounds = spliceMidXInsetBounds(
+      candidate.sourceX,
+      candidate.targetX,
+      diagramCenterX,
+      defaultSideCircuitLabelSpan(),
+    );
+
+    let laneIndex = 0;
+    let placedX: number | null = null;
+    for (;;) {
+      const xCandidate = lane.midX + inward * laneIndex * SPLICE_LANE_SEP;
+      // Stop pushing inward once we'd exit the strand's own feasible band.
+      if (
+        (inward > 0 && xCandidate > insetBounds.hi + SPLICE_PATH_EPS) ||
+        (inward < 0 && xCandidate < insetBounds.lo - SPLICE_PATH_EPS)
+      ) {
+        break;
+      }
+      const conflict = occupied.some(
+        (existing) =>
+          Math.abs(existing.x - xCandidate) <= SPLICE_PATH_EPS &&
+          verticalSpanOverlaps(y0, y1, existing.y0, existing.y1),
+      );
+      if (!conflict) {
+        placedX = xCandidate;
+        break;
+      }
+      laneIndex += 1;
+    }
+
+    // Fallback: keep the original midX (some shared track is unavoidable on
+    // very busy diagrams) rather than push past target X. Visual collision
+    // beats a hard loop-back regression.
+    const finalX = placedX ?? lane.midX;
+    occupied.push({ x: finalX, y0, y1 });
+    if (Math.abs(finalX - lane.midX) > SPLICE_PATH_EPS) {
+      lanes.set(candidate.id, { ...lane, midX: finalX });
+    }
+  }
+}
+
+/** Re-derive rowOffset ranks from live handle Y after cable drag. */
+export function recomputeRowOffsetsFromHandleYs(
+  entries: Array<{
+    id: string;
+    sourceX: number;
+    sourceY: number;
+    targetX: number;
+    targetY: number;
+  }>,
+): Map<string, number> {
+  const byZone = new Map<string, typeof entries>();
+  for (const entry of entries) {
+    const key = spliceRoutingZoneKey(entry.sourceX, entry.targetX);
+    const list = byZone.get(key) ?? [];
+    list.push(entry);
+    byZone.set(key, list);
+  }
+
+  const result = new Map<string, number>();
+  for (const group of byZone.values()) {
+    const sorted = [...group].sort(
+      (a, b) =>
+        Math.min(a.sourceY, a.targetY) - Math.min(b.sourceY, b.targetY) ||
+        a.sourceY - b.sourceY ||
+        a.targetY - b.targetY ||
+        a.id.localeCompare(b.id),
+    );
+    sorted.forEach((entry, index) => {
+      result.set(entry.id, index * FIBER_ROW_PITCH);
+    });
   }
   return result;
 }
@@ -958,6 +1169,8 @@ export function assignSpliceRoutingLanes(
     if (!lane) continue;
     result.set(id, { ...lane, ...offsets });
   }
+
+  assignSideVertLaneXs(candidates, result);
 
   return result;
 }
@@ -1024,6 +1237,15 @@ function horizSegmentsOverlapOccupied(
   );
 }
 
+/**
+ * EDGE-011: stack horizontal tracks at SPLICE_LANE_SEP increments so source-
+ * side and target-side H segments never share the same Y at overlapping X.
+ *
+ * Global pass — horizontals from different routing zones can collide on the
+ * same Y over overlapping X ranges in busy multi-cable diagrams. A single
+ * occupied ledger across all candidates prevents cross-zone horizontal
+ * stack-up.
+ */
 function assignSideHorizLaneYs(
   candidates: MidXLaneCandidate[],
   lanes: Map<string, SpliceRoutingLane>,
@@ -1042,91 +1264,76 @@ function assignSideHorizLaneYs(
   }
   const diagramCenterY = (minY + maxY) / 2;
 
-  const byZone = new Map<string, MidXLaneCandidate[]>();
-  for (const candidate of candidates) {
-    const lane = lanes.get(candidate.id);
-    if (!lane) continue;
-    const key = spliceRoutingZoneKey(candidate.sourceX, candidate.targetX);
-    const list = byZone.get(key) ?? [];
-    list.push(candidate);
-    byZone.set(key, list);
-  }
+  const eligible = candidates.filter((c) => lanes.has(c.id));
+  eligible.sort(
+    (a, b) =>
+      a.rowOffset - b.rowOffset ||
+      a.sourceY - b.sourceY ||
+      a.targetY - b.targetY ||
+      a.id.localeCompare(b.id),
+  );
+  const occupied: Array<{ kind: "h"; y: number; x0: number; x1: number }> = [];
 
-  for (const group of byZone.values()) {
-    group.sort(
-      (a, b) =>
-        a.rowOffset - b.rowOffset ||
-        a.sourceY - b.sourceY ||
-        a.targetY - b.targetY ||
-        a.id.localeCompare(b.id),
-    );
-    const occupied: Array<{ kind: "h"; y: number; x0: number; x1: number }> =
-      [];
+  for (const candidate of eligible) {
+    const lane = lanes.get(candidate.id)!;
+    const sourceSign = sideHorizLaneSign(candidate.sourceY, diagramCenterY);
+    const targetSign = sideHorizLaneSign(candidate.targetY, diagramCenterY);
+    let sourceLane = 0;
+    let targetLane = 0;
 
-    for (const candidate of group) {
-      const lane = lanes.get(candidate.id)!;
-      const sourceSign = sideHorizLaneSign(candidate.sourceY, diagramCenterY);
-      const targetSign = sideHorizLaneSign(candidate.targetY, diagramCenterY);
-      let sourceLane = 0;
-      let targetLane = 0;
-
-      for (;;) {
-        const sourceHorizY =
-          candidate.sourceY + sourceSign * sourceLane * SPLICE_LANE_SEP;
-        const targetHorizY =
-          candidate.targetY + targetSign * targetLane * SPLICE_LANE_SEP;
-        const segments = horizontalSegmentsForLane(
-          candidate,
-          lane,
-          sourceHorizY,
-          targetHorizY,
-        );
-        if (!horizSegmentsOverlapOccupied(segments, occupied)) {
-          occupied.push(...segments);
-          const offsets: Pick<
-            SpliceRoutingLane,
-            "sourceHorizY" | "targetHorizY"
-          > = {};
-          if (Math.abs(sourceHorizY - candidate.sourceY) > SPLICE_PATH_EPS) {
-            offsets.sourceHorizY = sourceHorizY;
-          }
-          if (Math.abs(targetHorizY - candidate.targetY) > SPLICE_PATH_EPS) {
-            offsets.targetHorizY = targetHorizY;
-          }
-          if (offsets.sourceHorizY !== undefined || offsets.targetHorizY !== undefined) {
-            result.set(candidate.id, offsets);
-          }
-          break;
+    for (;;) {
+      const sourceHorizY =
+        candidate.sourceY + sourceSign * sourceLane * SPLICE_LANE_SEP;
+      const targetHorizY =
+        candidate.targetY + targetSign * targetLane * SPLICE_LANE_SEP;
+      const segments = horizontalSegmentsForLane(
+        candidate,
+        lane,
+        sourceHorizY,
+        targetHorizY,
+      );
+      if (!horizSegmentsOverlapOccupied(segments, occupied)) {
+        occupied.push(...segments);
+        const offsets: Pick<
+          SpliceRoutingLane,
+          "sourceHorizY" | "targetHorizY"
+        > = {};
+        if (Math.abs(sourceHorizY - candidate.sourceY) > SPLICE_PATH_EPS) {
+          offsets.sourceHorizY = sourceHorizY;
         }
-
-        const sourceSegs = sourceHorizSegments(
-          candidate.sourceX,
-          lane.midX,
-          lane.jogX,
-          sourceHorizY,
-        );
-        const targetSegs = [
-          {
-            kind: "h" as const,
-            y: targetHorizY,
-            x0: lane.midX,
-            x1: candidate.targetX,
-          },
-        ];
-        const sourceConflict = horizSegmentsOverlapOccupied(
-          sourceSegs,
-          occupied,
-        );
-        const targetConflict = horizSegmentsOverlapOccupied(
-          targetSegs,
-          occupied,
-        );
-        if (sourceConflict) sourceLane += 1;
-        if (targetConflict) targetLane += 1;
-        if (!sourceConflict && !targetConflict) {
-          sourceLane += 1;
-          targetLane += 1;
+        if (Math.abs(targetHorizY - candidate.targetY) > SPLICE_PATH_EPS) {
+          offsets.targetHorizY = targetHorizY;
         }
+        if (
+          offsets.sourceHorizY !== undefined ||
+          offsets.targetHorizY !== undefined
+        ) {
+          result.set(candidate.id, offsets);
+        }
+        break;
+      }
+
+      const sourceSegs = sourceHorizSegments(
+        candidate.sourceX,
+        lane.midX,
+        lane.jogX,
+        sourceHorizY,
+      );
+      const targetSegs = [
+        {
+          kind: "h" as const,
+          y: targetHorizY,
+          x0: lane.midX,
+          x1: candidate.targetX,
+        },
+      ];
+      const sourceConflict = horizSegmentsOverlapOccupied(sourceSegs, occupied);
+      const targetConflict = horizSegmentsOverlapOccupied(targetSegs, occupied);
+      if (sourceConflict) sourceLane += 1;
+      if (targetConflict) targetLane += 1;
+      if (!sourceConflict && !targetConflict) {
+        sourceLane += 1;
+        targetLane += 1;
       }
     }
   }

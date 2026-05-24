@@ -64,21 +64,20 @@ export function activeSpliceLaneCount(
 /**
  * Minimum canvas width so cable columns leave enough center gap for splice lanes.
  * Uses global row-offset span so horizontal lane spacing matches vertical tube groups.
+ *
+ * Width is always sized for the **expanded** graph (collapse=false). Toggling
+ * full-butt collapse therefore never changes the diagram width — collapsing
+ * fewer connections shouldn't shrink the routing space and force the layout
+ * to reflow in a way the user has to fix.
  */
 export function importLayoutWidthForGraph(
   graph: ConnectionGraph,
   options?: ImportLayoutWidthOptions,
 ): number {
-  const collapse = options?.collapse ?? false;
-  const hidden = hiddenPairIdsForLayout(graph, collapse);
-  const laneCount = activeSpliceLaneCount(graph, collapse);
+  // Intentionally ignore options.collapse for width sizing — see fn doc above.
+  const laneCount = activeSpliceLaneCount(graph, false);
   const { visualCables, dominant } = buildVisualCablesForLayout(graph);
-  const rowOffsets = connectionRowOffsets(
-    graph,
-    visualCables,
-    dominant,
-    hidden.size > 0 ? hidden : undefined,
-  );
+  const rowOffsets = connectionRowOffsets(graph, visualCables, dominant);
   const maxRowOffset = maxConnectionRowOffset(rowOffsets);
   const maxTubes = Math.max(1, ...visualCables.map((vc) => vc.tubes.length));
   const nodeWidth = estimatedCableNodeWidth(
@@ -90,10 +89,9 @@ export function importLayoutWidthForGraph(
 
   const minCenterGap = minCenterGapForRowSpan(maxRowOffset, laneCount);
   const columnSpan = 2 * margin + 2 * nodeWidth + minCenterGap;
-  const rowFloor = laneCount * CABLE_LAYOUT.fiberRowH + 600;
   const stageWidth = options?.stageWidth ?? 0;
 
-  return Math.max(CABLE_LAYOUT.width, stageWidth, columnSpan, rowFloor);
+  return Math.max(CABLE_LAYOUT.width, stageWidth, columnSpan);
 }
 
 export function reportStorageKey(graph: ConnectionGraph): string {

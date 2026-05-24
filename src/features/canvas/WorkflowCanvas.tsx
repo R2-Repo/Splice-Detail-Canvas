@@ -3,6 +3,7 @@ import {
   Controls,
   ReactFlow,
   ReactFlowProvider,
+  useNodesInitialized,
   useReactFlow,
   useEdgesState,
   useNodesState,
@@ -12,7 +13,7 @@ import {
   type OnNodeDrag,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { spliceEdgeTypes } from "@/features/canvas/edgeTypes";
 import {
@@ -28,6 +29,10 @@ import {
   visualCableIdFromNodeId,
 } from "@/features/diagram/cableDisplaySide";
 import { spliceNodeTypes } from "@/features/canvas/nodeTypes";
+import {
+  fiberHandlePosition,
+  recomputeRowOffsetsFromHandleYs,
+} from "@/features/canvas/edges/spliceEdgeRouting";
 import {
   CABLE_LAYOUT,
   resolveCableDragStopX,
@@ -48,6 +53,12 @@ import type { ConnectionGraph } from "@/types/splice";
 
 const emptyNodes: Node[] = [];
 const emptyEdges: Edge[] = [];
+
+const FIT_VIEW_OPTIONS = {
+  padding: 0.15,
+  duration: 200,
+  maxZoom: 1,
+} as const;
 
 function boundsForOutwardDrag(
   draggedX: number,
@@ -82,7 +93,10 @@ function boundsForOutwardDrag(
 
 function WorkflowCanvasInner() {
   const { fitView } = useReactFlow();
+  const nodesInitialized = useNodesInitialized();
   const updateNodeInternals = useUpdateNodeInternals();
+  const fitViewRequestRef = useRef(0);
+  const fitViewHandledRef = useRef(0);
   const [nodes, setNodes, onNodesChange] = useNodesState(emptyNodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState(emptyEdges);
   const reportKeyRef = useRef<string | null>(null);
@@ -95,6 +109,15 @@ function WorkflowCanvasInner() {
   const stageRef = useRef<HTMLDivElement | null>(null);
   const [meta, setMeta] = useState<string | null>(null);
   const [collapseFullButtSplices, setCollapseFullButtSplices] = useState(false);
+
+  useEffect(() => {
+    const requestId = fitViewRequestRef.current;
+    if (requestId === 0 || requestId === fitViewHandledRef.current) return;
+    if (!nodesInitialized || nodes.length === 0) return;
+
+    fitViewHandledRef.current = requestId;
+    fitView(FIT_VIEW_OPTIONS);
+  }, [nodesInitialized, nodes.length, fitView]);
 
   type ApplyGraphOptions = {
     fitView?: boolean;
@@ -175,11 +198,11 @@ function WorkflowCanvasInner() {
           }),
         );
       }
+      if (options?.fitView) fitViewRequestRef.current += 1;
       requestAnimationFrame(() => {
         for (const node of nextNodes) {
           if (node.type === "cable") updateNodeInternals(node.id);
         }
-        if (options?.fitView) fitView({ padding: 0.25, duration: 200 });
       });
       void layout;
     },
@@ -293,15 +316,73 @@ function WorkflowCanvasInner() {
             : n,
         );
         setEdges((currentEdges) => {
+          const { visualCables } = graph
+            ? buildVisualCablesForLayout(graph)
+            : { visualCables: [] };
+          const vcByNodeId = new Map(
+            visualCables.map((vc) => [`cable-${vc.id}`, vc]),
+          );
+          const handleEntries = currentEdges
+            .filter((edge) => edge.type === "splice")
+            .map((edge) => {
+              const sourceNode = nextNodes.find((n) => n.id === edge.source);
+              const targetNode = nextNodes.find((n) => n.id === edge.target);
+              const sourceVc = vcByNodeId.get(edge.source ?? "");
+              const targetVc = vcByNodeId.get(edge.target ?? "");
+              if (!sourceNode || !targetNode || !sourceVc || !targetVc) {
+                return null;
+              }
+              const connectionId = edge.id.replace(/^splice-/, "");
+              const sourceScale =
+                (sourceNode.data as CableNodeData).diagramScale ?? 1;
+              const targetScale =
+                (targetNode.data as CableNodeData).diagramScale ?? 1;
+              const sourceAligned = (sourceNode.data as CableNodeData).alignedStemX;
+              const targetAligned = (targetNode.data as CableNodeData).alignedStemX;
+              const sourcePos = fiberHandlePosition(
+                sourceVc,
+                connectionId,
+                sourceNode.position,
+                sourceScale,
+                sourceAligned,
+              );
+              const targetPos = fiberHandlePosition(
+                targetVc,
+                connectionId,
+                targetNode.position,
+                targetScale,
+                targetAligned,
+              );
+              return {
+                id: edge.id,
+                sourceX: sourcePos.x,
+                sourceY: sourcePos.y,
+                targetX: targetPos.x,
+                targetY: targetPos.y,
+              };
+            })
+            .filter((entry): entry is NonNullable<typeof entry> => entry != null);
+          const rowOffsets = recomputeRowOffsetsFromHandleYs(handleEntries);
+          const nextEdges = currentEdges.map((edge) => {
+            const rowOffset = rowOffsets.get(edge.id);
+            if (rowOffset === undefined) return edge;
+            return {
+              ...edge,
+              data: {
+                ...(edge.data as Record<string, unknown>),
+                rowOffset,
+              },
+            };
+          });
           persistLayout(
             nextNodes,
-            currentEdges,
+            nextEdges,
             {
               layoutWidth,
               ...(sideChanged ? { cableSides: { [visualId]: newSide } } : {}),
             },
           );
-          return currentEdges;
+          return nextEdges;
         });
         if (sideChanged) {
           requestAnimationFrame(() => updateNodeInternals(node.id));

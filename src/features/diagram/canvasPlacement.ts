@@ -1,26 +1,17 @@
+import { pairEndpointsForSide } from "@/features/diagram/buildConnectionGraph";
 import type { DominantCablePair } from "@/features/diagram/dominantCablePair";
 import {
   minRowIndexForVisualCable,
   parentVisualGroupKey,
 } from "@/features/diagram/dominantCablePair";
 import type { VisualCable } from "@/features/diagram/visualCables";
+import { cableNameKey } from "@/features/import/cableLegIdentity";
 import type { ConnectionGraph } from "@/types/splice";
 
 export type CablePlacement = {
   side: "left" | "right";
   order: number;
 };
-
-function cableSortRank(cable: string, side: "left" | "right"): number {
-  if (/DROP/i.test(cable) && !/DIST/i.test(cable)) return side === "left" ? 0 : 2;
-  if (/DK-/i.test(cable)) return side === "right" ? 3 : 1;
-  if (/2700|2700 E/i.test(cable)) return 1;
-  if (/3175|3300 E/i.test(cable) && /DIST/i.test(cable)) return side === "right" ? 0 : 2;
-  if (/144|288/i.test(cable)) return side === "right" ? 1 : 0;
-  const m = cable.match(/\b(\d{1,3})\b/);
-  const n = m ? Number.parseInt(m[1]!, 10) : 999;
-  return 10 + n;
-}
 
 function fiberCountForVisualCable(vc: VisualCable): number {
   return vc.tubes.reduce((n, t) => n + t.fibers.length, 0);
@@ -53,6 +44,65 @@ function cableSortTieBreak(
   return fiberCountForVisualCable(b) - fiberCountForVisualCable(a);
 }
 
+function partnerBarycenter(
+  vc: VisualCable,
+  graph: ConnectionGraph,
+  rowIndex: Map<string, number>,
+  visualCables: VisualCable[],
+): number {
+  const rows: number[] = [];
+  const myKey = cableNameKey(vc.cable);
+
+  for (const conn of graph.connections) {
+    if (conn.kind !== "fiber") continue;
+    const onVc = vc.tubes.some((t) =>
+      t.fibers.some((f) => f.connectionId === conn.id),
+    );
+    if (!onVc) continue;
+
+    const { left, right } = pairEndpointsForSide(conn.pair, graph);
+    const leftKey = cableNameKey(left.cable);
+    const rightKey = cableNameKey(right.cable);
+    const partnerKey = leftKey === myKey ? rightKey : rightKey === myKey ? leftKey : null;
+    if (!partnerKey) continue;
+
+    const partnerVc = visualCables.find(
+      (v) => cableNameKey(v.cable) === partnerKey && v.side !== vc.side,
+    );
+    if (partnerVc) {
+      rows.push(minRowIndexForVisualCable(partnerVc, rowIndex));
+    } else {
+      rows.push(rowIndex.get(conn.id) ?? 0);
+    }
+  }
+
+  if (rows.length === 0) return Number.MAX_SAFE_INTEGER;
+  return rows.reduce((sum, row) => sum + row, 0) / rows.length;
+}
+
+function sortSideByBarycenter(
+  cables: VisualCable[],
+  graph: ConnectionGraph,
+  rowIndex: Map<string, number>,
+  visualCables: VisualCable[],
+  dominant?: DominantCablePair | null,
+): VisualCable[] {
+  const ranks = new Map<string, number>();
+  for (const vc of cables) {
+    ranks.set(vc.id, partnerBarycenter(vc, graph, rowIndex, visualCables));
+  }
+
+  return [...cables].sort(
+    (a, b) =>
+      dominantGroupRank(a, a.side, dominant) -
+        dominantGroupRank(b, b.side, dominant) ||
+      (ranks.get(a.id) ?? 0) - (ranks.get(b.id) ?? 0) ||
+      cableSortTieBreak(a, b, graph) ||
+      a.cable.localeCompare(b.cable) ||
+      a.order - b.order,
+  );
+}
+
 export function computeCanvasPlacement(
   graph: ConnectionGraph,
   visualCables: VisualCable[],
@@ -65,31 +115,55 @@ export function computeCanvasPlacement(
     placement.set(vc.id, { side: vc.side, order: vc.order });
   }
 
-  const bySide = { left: [] as VisualCable[], right: [] as VisualCable[] };
-  for (const vc of visualCables) {
-    const p = placement.get(vc.id)!;
-    bySide[p.side].push(vc);
+  if (!rowIndex) {
+    const bySide = { left: [] as VisualCable[], right: [] as VisualCable[] };
+    for (const vc of visualCables) {
+      const p = placement.get(vc.id)!;
+      bySide[p.side].push(vc);
+    }
+    for (const side of ["left", "right"] as const) {
+      bySide[side]
+        .sort(
+          (a, b) =>
+            dominantGroupRank(a, side, dominant) -
+              dominantGroupRank(b, side, dominant) ||
+            cableSortTieBreak(a, b, graph) ||
+            a.cable.localeCompare(b.cable) ||
+            a.order - b.order,
+        )
+        .forEach((vc, order) => {
+          placement.set(vc.id, { side, order });
+        });
+    }
+    return placement;
   }
 
-  for (const side of ["left", "right"] as const) {
-    bySide[side]
-      .sort(
-        (a, b) =>
-          dominantGroupRank(a, side, dominant) -
-            dominantGroupRank(b, side, dominant) ||
-          (rowIndex
-            ? minRowIndexForVisualCable(a, rowIndex) -
-              minRowIndexForVisualCable(b, rowIndex)
-            : 0) ||
-          cableSortTieBreak(a, b, graph) ||
-          cableSortRank(a.cable, side) - cableSortRank(b.cable, side) ||
-          a.cable.localeCompare(b.cable) ||
-          a.order - b.order,
-      )
-      .forEach((vc, order) => {
-        placement.set(vc.id, { side, order });
-      });
+  let leftOrder = visualCables.filter((vc) => vc.side === "left");
+  let rightOrder = visualCables.filter((vc) => vc.side === "right");
+
+  for (let pass = 0; pass < 2; pass++) {
+    leftOrder = sortSideByBarycenter(
+      leftOrder,
+      graph,
+      rowIndex,
+      visualCables,
+      dominant,
+    );
+    rightOrder = sortSideByBarycenter(
+      rightOrder,
+      graph,
+      rowIndex,
+      visualCables,
+      dominant,
+    );
   }
+
+  leftOrder.forEach((vc, order) => {
+    placement.set(vc.id, { side: "left", order });
+  });
+  rightOrder.forEach((vc, order) => {
+    placement.set(vc.id, { side: "right", order });
+  });
 
   return placement;
 }

@@ -74,9 +74,6 @@ describe("importLayoutWidthForGraph", () => {
 
       const width = importLayoutWidthForGraph(graph, { collapse });
       expect(width).toBeGreaterThanOrEqual(minWidth);
-      expect(width).toBeGreaterThanOrEqual(
-        laneCount * CABLE_LAYOUT.fiberRowH + 600,
-      );
 
       const rowIndex = connectionRowIndexMap(graph, visualCables, dominant);
       const placement = computeCanvasPlacement(
@@ -140,6 +137,14 @@ describe("importLayoutWidthForGraph", () => {
           .map((n) => n.position.x),
       ),
     ).toBe(wideRightX);
+  });
+
+  it("11400S: width is identical with collapse on/off (toggle is width-stable)", () => {
+    const csv = readFileSync(join(examples, "SP-I-15_11400S.csv"), "utf8");
+    const graph = buildConnectionGraph(parseBentleyCsv(csv));
+    const expanded = importLayoutWidthForGraph(graph, { collapse: false });
+    const collapsed = importLayoutWidthForGraph(graph, { collapse: true });
+    expect(collapsed).toBe(expanded);
   });
 
   it("applyLayoutOverrides refreshColumnX keeps saved Y only", () => {

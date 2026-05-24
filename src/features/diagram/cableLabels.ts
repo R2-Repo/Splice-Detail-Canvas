@@ -26,12 +26,53 @@ export function formatCircuitTag(circuitName?: string, fiberColor?: string): str
   return `(${base})`;
 }
 
-/** Estimated rendered width of a circuit/OS tag (matches cable-node__circuit cap). */
+const CIRCUIT_TAG_FONT =
+  '500 0.5rem system-ui, -apple-system, "Segoe UI", sans-serif';
+
+let measureCanvas: HTMLCanvasElement | null = null;
+const circuitTagWidthCache = new Map<string, number>();
+
+function estimateCircuitTagWidth(tag: string): number {
+  return Math.min(tag.length * 4.5, FIBER_CIRCUIT_MAX_WIDTH);
+}
+
+/** Rendered width of a circuit/OS tag (matches `.cable-node__circuit`). */
 export function formattedCircuitTagWidth(circuitName?: string): number {
   const tag = formatCircuitTag(circuitName);
   if (!tag) return 0;
-  const estimated = tag.length * 4.5;
-  return Math.min(estimated, FIBER_CIRCUIT_MAX_WIDTH);
+
+  const cached = circuitTagWidthCache.get(tag);
+  if (cached !== undefined) return cached;
+
+  if (typeof document === "undefined") {
+    const width = estimateCircuitTagWidth(tag);
+    circuitTagWidthCache.set(tag, width);
+    return width;
+  }
+
+  try {
+    if (!measureCanvas) {
+      measureCanvas = document.createElement("canvas");
+    }
+    const ctx = measureCanvas.getContext("2d");
+    if (ctx) {
+      ctx.font = CIRCUIT_TAG_FONT;
+      const width = Math.min(ctx.measureText(tag).width, FIBER_CIRCUIT_MAX_WIDTH);
+      circuitTagWidthCache.set(tag, width);
+      return width;
+    }
+  } catch {
+    // jsdom or other environments without canvas 2d
+  }
+
+  const width = estimateCircuitTagWidth(tag);
+  circuitTagWidthCache.set(tag, width);
+  return width;
+}
+
+/** @internal test helper */
+export function resetCircuitTagWidthCacheForTests(): void {
+  circuitTagWidthCache.clear();
 }
 
 export type SideCircuitLabelSpan = { left: number; right: number };

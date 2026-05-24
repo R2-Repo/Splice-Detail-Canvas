@@ -101,9 +101,30 @@ function tubeLengthForCount(tubeCount: number, scale: number): number {
   return (BREAKOUT.tubeLengthBase + extra) * scale;
 }
 
+/** Longer tubes when more fibers fan out from the buffer tube. */
+function tubeLengthForFiberCount(fiberCount: number, scale: number): number {
+  const fiberBonus = Math.max(0, fiberCount - 1) * 4;
+  return (BREAKOUT.tubeLengthBase + fiberBonus) * scale;
+}
+
+function maxTubeLengthForCable(
+  tubes: VisualTube[],
+  scale: number,
+): number {
+  const tubeCount = Math.max(1, tubes.length);
+  let maxLen = tubeLengthForCount(tubeCount, scale);
+  for (const tube of tubes) {
+    maxLen = Math.max(
+      maxLen,
+      tubeLengthForFiberCount(Math.max(1, tube.fibers.length), scale),
+    );
+  }
+  return maxLen;
+}
+
 /** Horizontal distance from sheath face to fiber fan stem (side-invariant). */
-export function tubeReachFromSheath(tubeCount: number, scale = 1): number {
-  return tubeLengthForCount(tubeCount, scale) + BREAKOUT.fiberStemGap;
+export function tubeReachFromSheath(tubes: VisualTube[], scale = 1): number {
+  return maxTubeLengthForCable(tubes, scale) + BREAKOUT.fiberStemGap;
 }
 
 /** Absolute stem X from the node’s left edge (before right-side mirroring). */
@@ -111,7 +132,7 @@ export function naturalStemX(tubes: VisualTube[], scale = 1): number {
   const tubeCount = Math.max(1, tubes.length);
   const sheath = computeSheathSize(scale, tubeCount);
   return (
-    sheath.width + tubeLengthForCount(tubeCount, scale) + BREAKOUT.fiberStemGap
+    sheath.width + maxTubeLengthForCable(tubes, scale) + BREAKOUT.fiberStemGap
   );
 }
 
@@ -172,22 +193,25 @@ export function computeCableBreakout(
     height: sheathSize.height,
   };
 
-  const tubeCount = sortedTubes.length;
-  const defaultTubeLength = tubeLengthForCount(tubeCount, scale);
+  const defaultTubeLength = maxTubeLengthForCable(sortedTubes, scale);
   const tubeFaceX = sheathSize.width;
   const stemXAbsolute =
     alignedStemX ??
     tubeFaceX + defaultTubeLength + BREAKOUT.fiberStemGap;
-  const tubeLength = Math.max(
-    defaultTubeLength,
-    stemXAbsolute - BREAKOUT.fiberStemGap - tubeFaceX,
-  );
   const stemX = stemXAbsolute;
   const viewWidth = stemX + BREAKOUT.fiberLabelWidth;
 
   const tubeGeoms: TubeBreakoutGeom[] = sortedTubes.map((tube) => {
     const tubeCenterY = tubeFiberCenterY(tube, bodyTop, pitch);
     const origin = { x: tubeFaceX, y: cableCenterY };
+    const perTubeLength = Math.max(
+      defaultTubeLength,
+      tubeLengthForFiberCount(Math.max(1, tube.fibers.length), scale),
+    );
+    const tubeLength = Math.max(
+      perTubeLength,
+      stemXAbsolute - BREAKOUT.fiberStemGap - tubeFaceX,
+    );
     const endX = tubeFaceX + tubeLength;
     const endY = tubeCenterY;
     const angleDeg =

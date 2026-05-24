@@ -42,7 +42,7 @@ Do **not** weaken or delete a rule without explicit user approval.
 | **TUB-004** | Multi-tube cables have **longer tube reach** than single-tube cables (stem extends further from sheath). |
 | **TUB-005** | Right-side cables **mirror** breakout geometry (sheath and tubes face inward toward splice center). |
 | **TUB-006** | Buffer tubes on each cable are ordered top→bottom: **BL…AQ**, then **BL-BK…AQ-BK** (TIA solid then striped). |
-| **TUB-007** | Same-side cables share one **fiber label column** — circuit tags and fiber color codes align vertically; buffer tubes extend dynamically to meet the shared stem X. |
+| **TUB-007** | Same-side cables share one **fiber label column** — circuit tags and fiber color codes align vertically; buffer tubes extend dynamically to meet the shared stem X. Per-tube horizontal reach scales with fiber count within the cable. |
 
 ### Cable placement (`CBL`)
 
@@ -60,7 +60,7 @@ Do **not** weaken or delete a rule without explicit user approval.
 |----|-------------|
 | **ROW-001** | Global splice-row steps within one buffer tube equal `FIBER_ROW_PITCH` (24px). |
 | **ROW-002** | Global splice-row steps across buffer-tube boundaries add `TUBE_GROUP_GAP` (8px) beyond pitch. |
-| **ROW-003** | Ring-cut split instances add **extra vertical gap** so sibling visual cables can row-align without overlap. |
+| **ROW-003** | Ring-cut split boundaries add **adaptive gap** (min 24–48px, expanded to clear stacked sibling cable height when needed). Stub→dominant transitions use compact 24–48px only. |
 | **ROW-004** | Through-cable splices sort by through-cable fiber #; crossover stubs use `max(left, right)` fiber # (Example #3). *Example-specific assertion in `connectionRowOrder.test.ts`.* |
 
 ### Dominant cable pair (`DOM`)
@@ -83,10 +83,11 @@ Do **not** weaken or delete a rule without explicit user approval.
 | **EDGE-005** | **Buffer-tube grouping in center lanes:** `midX` order mirrors vertical `rowOffset` (+ tube-boundary gaps). For downward splices (right endpoint below left), top rows bend farther toward the target; for upward splices, top rows bend closer to the source. |
 | **EDGE-006** | Route template minimizes bends among grouping-preserving options; lane stagger applies only to `hv_demarcated` paths (crossing prevention). |
 | **EDGE-007** | Nested center bends avoid H×V segment crossings within same-direction bundles — upper fibers bend first (farther toward target) on downward splices. |
-| **EDGE-008** | Center vertical lanes (`midX`) stay at least **24px** apart within each cable-column routing zone — never collapse on crossover pairs. |
-| **EDGE-009** | Non-straight splices run horizontally **past the longest OS/circuit label on that canvas side**, then **≥60px** inward toward center, before vertical legs — same-side and cross-side; both source and target legs. |
+| **EDGE-008** | Center vertical lanes (`midX`) stay at least **24px** apart within each cable-column routing zone — never collapse when OS-inset is infeasible. |
+| **EDGE-009** | Non-straight splices run horizontally **past the longest OS/circuit label on that canvas side** (measured via canvas `measureText`), then **≥60px** inward toward center, before vertical legs — same-side and cross-side; both source and target legs. |
 | **EDGE-010** | Fibers from the **same buffer tube** to the **same target cable** use **24px-spaced** vertical lanes plus a **shared horizontal trunk** (`jogX`) before each lane turns vertical — stay grouped without stacking. |
-| **EDGE-011** | Parallel splice segments never **stack on the same track** (same X for vertical, same Y for horizontal); distinct lanes stay ≥24px apart. Side horizontal legs use **offset Y tracks** (`sourceHorizY` / `targetHorizY`) when aligned rows would overlap in the gap. |
+| **EDGE-011** | Parallel splice segments never **stack on the same track** (same X for vertical, same Y for horizontal); distinct lanes stay ≥24px apart. Side horizontal legs use **offset Y tracks** (`sourceHorizY` / `targetHorizY`) when aligned rows would overlap in the gap. **Global** — applies across all routing zones, not just within a single source/target cable pair. |
+| **EDGE-012** | When vertical center legs overlap in Y, they use **distinct midX lanes** (≥24px apart). **Global** — applies across all routing zones. |
 
 ### Fiber strand direction (`STR`)
 
@@ -103,7 +104,7 @@ Defined in `src/features/diagram/cableLayoutMetrics.ts`:
 | Constant | Value | Used for |
 |----------|-------|----------|
 | `FIBER_ROW_PITCH` / `MIN_FIBER_LINE_GAP` | 24px | Fiber spacing within tube, row pitch, splice lane separation |
-| `SAME_SIDE_CENTER_INSET` | 24px | Legacy alias; see `MIN_SPLICE_HORIZONTAL_INSET` |
+| `MIN_HORIZONTAL_INSET_FLOOR` | 16px | Minimum inward jog when OS label span leaves no room for full 60px inset |
 | `MIN_SPLICE_HORIZONTAL_INSET` | 60px | Inward jog after the OS/circuit label column before vertical legs |
 | `TUBE_GROUP_GAP` | 8px | Extra gap at buffer-tube boundaries in global row layout |
 | `CABLE_LAYOUT.cableGap` | 32px | Vertical gap between stacked same-side cables |

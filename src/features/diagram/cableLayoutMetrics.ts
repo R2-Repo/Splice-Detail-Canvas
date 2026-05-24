@@ -25,7 +25,7 @@ export const SPLICE_LANE_SEP = MIN_FIBER_LINE_GAP;
 export const SPLICE_ROUTING_END_MARGIN = 16;
 
 /** Minimum horizontal run toward diagram center before same-side splices turn vertical. */
-export const SAME_SIDE_CENTER_INSET = MIN_FIBER_LINE_GAP;
+export const MIN_HORIZONTAL_INSET_FLOOR = 16;
 
 /**
  * Horizontal jog toward diagram center after the OS/circuit label column.
@@ -52,7 +52,12 @@ export function fiberRowPrefixWidth(): number {
 /**
  * Minimum horizontal gap between cable columns so splice lanes keep 24px rhythm
  * (including buffer-tube boundary steps from row offsets).
+ *
+ * Floor of 320px (was 200px) so busy multi-cable diagrams have room for the
+ * global vertical-lane deconflict pass to spread without colliding on midX.
  */
+const MIN_CENTER_GAP_FLOOR = 320;
+
 export function minCenterGapForRowSpan(
   maxRowOffset: number,
   laneCount: number,
@@ -60,10 +65,14 @@ export function minCenterGapForRowSpan(
   const minFromOffsets = maxRowOffset + 2 * SPLICE_ROUTING_END_MARGIN;
   const minFromLanes =
     laneCount <= 1
-      ? 200
-      : Math.max(200, (laneCount - 1) * SPLICE_LANE_SEP) +
+      ? MIN_CENTER_GAP_FLOOR
+      : Math.max(MIN_CENTER_GAP_FLOOR, (laneCount - 1) * SPLICE_LANE_SEP) +
         2 * SPLICE_ROUTING_END_MARGIN;
   return Math.max(minFromOffsets, minFromLanes);
+}
+
+export function diagramCenterXFromLayoutWidth(layoutWidth: number): number {
+  return layoutWidth / 2;
 }
 
 export const CABLE_LAYOUT = {

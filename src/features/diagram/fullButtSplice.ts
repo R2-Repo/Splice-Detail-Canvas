@@ -1,4 +1,4 @@
-import { cableLegIdForEndpoint } from "@/features/diagram/buildConnectionGraph";
+import { cableLegIdForEndpoint, pairEndpointsForSide } from "@/features/diagram/buildConnectionGraph";
 import { FIBERS_PER_BUFFER_TUBE } from "@/features/diagram/cableLayoutMetrics";
 import { diagramSideForCsvColumn } from "@/features/import/cableLegIdentity";
 import { tubeEndpointKey } from "@/features/diagram/tubeId";
@@ -36,17 +36,6 @@ type TubePairGroup = {
   pairs: SplicePair[];
 };
 
-/** Stable left/right from CSV From/To columns — not canvas placement. */
-function pairEndpointsForDetection(
-  pair: SplicePair,
-): { left: FiberEndpoint; right: FiberEndpoint } {
-  const sideA = diagramSideForCsvColumn(pair.endpointA.csvColumn);
-  if (sideA === "left") {
-    return { left: pair.endpointA, right: pair.endpointB };
-  }
-  return { left: pair.endpointB, right: pair.endpointA };
-}
-
 function tubePairGroupKey(
   leftLegId: string,
   leftTube: TubeColorCode,
@@ -60,7 +49,7 @@ function groupPairsByTubePair(graph: ConnectionGraph): TubePairGroup[] {
   const groups = new Map<string, TubePairGroup>();
 
   for (const pair of graph.report.pairs) {
-    const { left, right } = pairEndpointsForDetection(pair);
+    const { left, right } = pairEndpointsForSide(pair, graph);
     const leftLegId = cableLegIdForEndpoint(left);
     const rightLegId = cableLegIdForEndpoint(right);
     const key = tubePairGroupKey(
@@ -169,13 +158,13 @@ function coversAllFibersInBothTubes(
 
   const leftCovered = new Set(
     group.pairs.map((p) => {
-      const { left } = pairEndpointsForDetection(p);
+      const { left } = pairEndpointsForSide(p, graph);
       return `${left.fiberNumber}:${left.fiberColor}`;
     }),
   );
   const rightCovered = new Set(
     group.pairs.map((p) => {
-      const { right } = pairEndpointsForDetection(p);
+      const { right } = pairEndpointsForSide(p, graph);
       return `${right.fiberNumber}:${right.fiberColor}`;
     }),
   );
@@ -199,7 +188,7 @@ function isFullButtSpliceTubeGroup(
   if (!coversAllFibersInBothTubes(graph, group)) return false;
 
   for (const pair of group.pairs) {
-    const { left, right } = pairEndpointsForDetection(pair);
+    const { left, right } = pairEndpointsForSide(pair, graph);
     if (left.fiberColor !== right.fiberColor) return false;
     if (diagramSideForCsvColumn(left.csvColumn) !== "left") return false;
     if (diagramSideForCsvColumn(right.csvColumn) !== "right") return false;
@@ -208,7 +197,7 @@ function isFullButtSpliceTubeGroup(
   const leftColors = new Set<string>();
   const rightColors = new Set<string>();
   for (const pair of group.pairs) {
-    const { left, right } = pairEndpointsForDetection(pair);
+    const { left, right } = pairEndpointsForSide(pair, graph);
     if (leftColors.has(left.fiberColor)) return false;
     if (rightColors.has(right.fiberColor)) return false;
     leftColors.add(left.fiberColor);
@@ -310,7 +299,7 @@ function tubePairColorsMatch(
   for (const id of pairIds) {
     const pair = graph.report.pairs.find((p) => p.id === id);
     if (!pair) return false;
-    const { left, right } = pairEndpointsForDetection(pair);
+    const { left, right } = pairEndpointsForSide(pair, graph);
     if (left.fiberColor !== right.fiberColor) return false;
   }
   return true;

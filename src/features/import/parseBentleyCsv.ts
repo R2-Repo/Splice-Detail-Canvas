@@ -290,9 +290,9 @@ function normalizePairEndpoints(
 export function parseDataRowWithResult(
   line: string,
   lineNumber: number,
-  csvSideHint: "left" | "right",
+  csvSection: "left" | "right",
 ): ParseRowResult {
-  const row = tokenizeBentleyRow(line, lineNumber, csvSideHint);
+  const row = tokenizeBentleyRow(line, lineNumber, csvSection);
   if (!row) {
     return failRow(line, lineNumber, "NO_ARROW", "Missing <-> marker");
   }
@@ -327,7 +327,6 @@ export function parseDataRowWithResult(
   const circuitName = extractCircuitName(rightParts);
   return toParseRowResult(
     { line, lineNumber, endpointA, endpointB },
-    csvSideHint,
     id,
     circuitName,
   );
@@ -340,15 +339,6 @@ export function extractCircuitName(rightParts: string[]): string | undefined {
   );
   const last = p[p.length - 1] ?? "";
   return isOsField(last) ? last.trim() : undefined;
-}
-
-/** @deprecated Use parseDataRowWithResult — returns pair only for backward compatibility */
-export function parseDataRow(
-  line: string,
-  csvSideHint: "left" | "right",
-): SplicePair | null {
-  const result = parseDataRowWithResult(line, 0, csvSideHint);
-  return result.ok ? result.pair : null;
 }
 
 export function endpointKey(ep: FiberEndpoint): string {

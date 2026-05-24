@@ -111,6 +111,15 @@ function rowStepAfter(
   return step;
 }
 
+/**
+ * Adaptive row gap at cable-group boundaries — small enough to avoid tall diagrams;
+ * collision pass handles same-side cable stack height.
+ */
+export function adaptiveBoundaryRowGap(shortFiberCount: number): number {
+  const pitchSteps = Math.min(Math.max(1, shortFiberCount), 2);
+  return Math.max(TUBE_GROUP_GAP, pitchSteps * FIBER_ROW_PITCH);
+}
+
 /** Extra gap when leaving the dominant pair row block for stub cables. */
 function stubGroupGapAtBoundary(
   current: FiberConnection,
@@ -133,9 +142,9 @@ function stubGroupGapAtBoundary(
     dominant,
   );
   if (!currDom || nextDom) return 0;
-  const stubCount = visualCableFiberCount(visualCables, next.id);
-  const h = compactVisualCableHeight(Math.max(1, stubCount));
-  return Math.max(0, h + CABLE_LAYOUT.cableGap - FIBER_ROW_PITCH);
+  const currCount = visualCableFiberCount(visualCables, current.id);
+  const nextCount = visualCableFiberCount(visualCables, next.id);
+  return adaptiveBoundaryRowGap(Math.min(currCount, nextCount));
 }
 
 function visualCableFiberCount(
@@ -210,12 +219,16 @@ function splitInstanceGapAtBoundary(
     if (parentVisualCableKey(currVc.id) !== parentVisualCableKey(nextVc.id)) {
       continue;
     }
-    const fiberCount = Math.max(
-      currVc.tubes.flatMap((t) => t.fibers).length,
-      nextVc.tubes.flatMap((t) => t.fibers).length,
+    const currCount = currVc.tubes.flatMap((t) => t.fibers).length;
+    const nextCount = nextVc.tubes.flatMap((t) => t.fibers).length;
+    const shortCount = Math.min(currCount, nextCount);
+    const tallCount = Math.max(currCount, nextCount);
+    const adaptive = adaptiveBoundaryRowGap(shortCount);
+    const stackClearance = Math.max(
+      0,
+      compactVisualCableHeight(tallCount) + CABLE_LAYOUT.cableGap - FIBER_ROW_PITCH,
     );
-    const h = compactVisualCableHeight(fiberCount);
-    return Math.max(0, h + CABLE_LAYOUT.cableGap - FIBER_ROW_PITCH);
+    return Math.max(adaptive, stackClearance);
   }
   return 0;
 }

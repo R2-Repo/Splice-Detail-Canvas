@@ -1,10 +1,15 @@
 import type { SplicePair } from "@/types/splice";
 
+import {
+  CABLE_LAYOUT,
+  compactVisualCableHeight,
+} from "@/features/diagram/cableLayoutMetrics";
 import { cableNameKey } from "@/features/import/cableLegIdentity";
 
 export type LayoutScoreWeights = {
   crossings: number;
   bends: number;
+  heightImbalance: number;
   sideChanges: number;
   verticalSpread: number;
 };
@@ -12,6 +17,7 @@ export type LayoutScoreWeights = {
 export const DEFAULT_LAYOUT_SCORE_WEIGHTS: LayoutScoreWeights = {
   crossings: 1000,
   bends: 100,
+  heightImbalance: 10,
   sideChanges: 5,
   verticalSpread: 1,
 };
@@ -24,7 +30,36 @@ export type ScoredSideAssignment = {
   bends: number;
   sameSidePairs: number;
   sideChanges: number;
+  heightImbalance: number;
 };
+
+function fiberCountByCable(pairs: SplicePair[]): Map<string, number> {
+  const counts = new Map<string, number>();
+  for (const pair of pairs) {
+    for (const ep of [pair.endpointA, pair.endpointB]) {
+      const key = cableNameKey(ep.cable);
+      counts.set(key, (counts.get(key) ?? 0) + 1);
+    }
+  }
+  return counts;
+}
+
+function sideStackHeight(
+  sides: Map<string, "left" | "right">,
+  fiberCounts: Map<string, number>,
+  side: "left" | "right",
+): number {
+  let height = 0;
+  let count = 0;
+  for (const [cable, assigned] of sides) {
+    if (assigned !== side) continue;
+    const fibers = fiberCounts.get(cable) ?? 1;
+    height += compactVisualCableHeight(Math.ceil(fibers / 2)) + CABLE_LAYOUT.cableGap;
+    count += 1;
+  }
+  if (count > 0) height -= CABLE_LAYOUT.cableGap;
+  return height;
+}
 
 function fiberSortKey(ep: SplicePair["endpointA"]): number {
   return ep.fiberNumber * 100 + ep.tubeColor.length;
@@ -95,9 +130,15 @@ export function scoreCableSideAssignment(
   const crossings = countInversions(crossPairs.map((p) => p.rightKey));
   const verticalSpread = crossPairs.length;
 
+  const fiberCounts = fiberCountByCable(pairs);
+  const leftHeight = sideStackHeight(sides, fiberCounts, "left");
+  const rightHeight = sideStackHeight(sides, fiberCounts, "right");
+  const heightImbalance = Math.abs(leftHeight - rightHeight);
+
   const score =
     crossings * weights.crossings +
     sameSidePairs * weights.bends +
+    heightImbalance * weights.heightImbalance +
     sideChanges * weights.sideChanges +
     verticalSpread * weights.verticalSpread;
 
@@ -108,6 +149,7 @@ export function scoreCableSideAssignment(
     bends: sameSidePairs,
     sameSidePairs,
     sideChanges,
+    heightImbalance,
   };
 }
 
@@ -131,6 +173,9 @@ export function compareSideAssignments(
     return a.sameSidePairs - b.sameSidePairs;
   }
   if (a.crossings !== b.crossings) return a.crossings - b.crossings;
+  if (a.heightImbalance !== b.heightImbalance) {
+    return a.heightImbalance - b.heightImbalance;
+  }
   return a.score - b.score;
 }
 
@@ -149,21 +194,4 @@ export function pickBestSideAssignment(
     }
   }
   return best;
-}
-
-/** Candidate side maps for tie-breaking equal opposite-weight assignments. */
-export function generateSideAssignmentCandidates(
-  base: Map<string, "left" | "right">,
-): Map<string, "left" | "right">[] {
-  const candidates = [base, mirrorSideAssignment(base)];
-  const seen = new Set<string>();
-  return candidates.filter((c) => {
-    const key = [...c.entries()]
-      .sort(([a], [b]) => a.localeCompare(b))
-      .map(([k, v]) => `${k}:${v}`)
-      .join("|");
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  });
 }

@@ -497,6 +497,70 @@ describe("spliceEdgeRouting", () => {
     expect(outerPath).toContain(`${outerLane.midX},${outerMeta.sourceY}`);
   });
 
+  it("anchors bundle trunk at the source side so fan-out has no loop-back", () => {
+    // Left source going right: trunk should be the LEAST-inward midX (= min)
+    // so the source-side H and the per-strand fan-out flow in the same
+    // direction (no reverse-direction loop-back past target X).
+    const sourceX = 100;
+    const targetX = 1100;
+    const bundleKey = "vc-left|BL|vc-right";
+    const candidates = [
+      {
+        id: "a",
+        sourceX,
+        sourceY: 100,
+        targetX,
+        targetY: 400,
+        rowOffset: 0,
+        tubeBundleKey: bundleKey,
+      },
+      {
+        id: "b",
+        sourceX,
+        sourceY: 124,
+        targetX,
+        targetY: 424,
+        rowOffset: 24,
+        tubeBundleKey: bundleKey,
+      },
+      {
+        id: "c",
+        sourceX,
+        sourceY: 148,
+        targetX,
+        targetY: 448,
+        rowOffset: 48,
+        tubeBundleKey: bundleKey,
+      },
+      {
+        id: "d",
+        sourceX,
+        sourceY: 172,
+        targetX,
+        targetY: 472,
+        rowOffset: 72,
+        tubeBundleKey: bundleKey,
+      },
+    ];
+    const packed = assignSpliceRoutingLanes(candidates);
+    const lanes = candidates.map((c) => packed.get(c.id)!);
+    const mids = lanes.map((l) => l.midX);
+    const minMid = Math.min(...mids);
+    const trunkXs = lanes
+      .map((l) => l.jogX)
+      .filter((x): x is number => x !== undefined);
+    // All strands sharing the bundle pin to the same trunk X.
+    expect(new Set(trunkXs).size).toBe(1);
+    // Trunk hugs the source side (= min midX for left source).
+    expect(trunkXs[0]).toBe(minMid);
+    // Fan-out direction matches source→target direction (right): each fan
+    // segment goes from trunk (min) rightward to its own midX. No segment
+    // ever crosses BACK to the left of the trunk.
+    for (const lane of lanes) {
+      expect(lane.midX).toBeGreaterThanOrEqual(minMid - 0.01);
+    }
+  });
+
   it("packMidXLanes separates same-side vertical lanes toward center", () => {
     const columnX = 200;
     const candidates = [
@@ -531,6 +595,146 @@ describe("spliceEdgeRouting", () => {
         left: 66,
         right: 120,
       }),
+    ).toBe(true);
+  });
+
+  it("packs cross-side bundle at 24px sep on wide spans (no span-stretch)", () => {
+    const sourceX = 100;
+    const targetX = 1100;
+    const candidates = [
+      { id: "a", sourceX, sourceY: 100, targetX, targetY: 400, rowOffset: 0 },
+      { id: "b", sourceX, sourceY: 124, targetX, targetY: 424, rowOffset: 24 },
+      { id: "c", sourceX, sourceY: 148, targetX, targetY: 448, rowOffset: 48 },
+      { id: "d", sourceX, sourceY: 172, targetX, targetY: 472, rowOffset: 72 },
+    ];
+    const packed = packMidXLanes(candidates);
+    const mids = candidates.map((c) => packed.get(c.id)!);
+    const sorted = [...mids].sort((a, b) => a - b);
+    for (let i = 1; i < sorted.length; i++) {
+      const gap = sorted[i]! - sorted[i - 1]!;
+      expect(gap).toBeGreaterThanOrEqual(SPLICE_LANE_SEP - 0.01);
+      expect(gap).toBeLessThanOrEqual(SPLICE_LANE_SEP + 0.01);
+    }
+    const range = Math.max(...mids) - Math.min(...mids);
+    expect(range).toBeLessThanOrEqual((candidates.length - 1) * SPLICE_LANE_SEP + 1);
+  });
+
+  it("spreads bundles across the routing span by global row offset", () => {
+    // Two zones (different sourceX) with very different row-offset ranges:
+    // - lowZone strands sit near the top of the global row order (small rowOffset)
+    // - hiZone strands sit near the bottom (rowOffset close to global max)
+    // After packing, the two bundles must land at clearly different X
+    // positions so the entire center span gets used (not all crammed at the
+    // band midpoint).
+    const targetX = 1100;
+    const globalMax = 1024;
+    const candidates = [
+      // Upward (sourceY > targetY) so spliceMidXFromRowOffset does NOT
+      // invert, and low rowOffset → ideal near source, high → near target.
+      { id: "lowA", sourceX: 100, sourceY: 400, targetX, targetY: 100, rowOffset: 0 },
+      { id: "lowB", sourceX: 100, sourceY: 424, targetX, targetY: 124, rowOffset: 24 },
+      { id: "hiA", sourceX: 220, sourceY: 1200, targetX, targetY: 900, rowOffset: globalMax },
+      { id: "hiB", sourceX: 220, sourceY: 1224, targetX, targetY: 924, rowOffset: globalMax - 24 },
+    ];
+    const lanes = assignSpliceMidXLanes(candidates);
+    const lowCenter = (lanes.get("lowA")! + lanes.get("lowB")!) / 2;
+    const hiCenter = (lanes.get("hiA")! + lanes.get("hiB")!) / 2;
+    // Low-row bundle anchors clearly source-ward of the high-row bundle.
+    expect(hiCenter - lowCenter).toBeGreaterThan(200);
+  });
+
+  it("anchors cross-side bundle at the band midpoint (uses center, no loop-back)", () => {
+    const sourceX = 100;
+    const targetX = 1100;
+    const candidates = [
+      { id: "a", sourceX, sourceY: 100, targetX, targetY: 400, rowOffset: 0 },
+      { id: "b", sourceX, sourceY: 124, targetX, targetY: 424, rowOffset: 24 },
+      { id: "c", sourceX, sourceY: 148, targetX, targetY: 448, rowOffset: 48 },
+      { id: "d", sourceX, sourceY: 172, targetX, targetY: 472, rowOffset: 72 },
+    ];
+    const packed = packMidXLanes(candidates);
+    // No loop-back: with source on left + target on right, midX must stay
+    // <= targetX so the verticals never overshoot and require a reverse-H.
+    for (const c of candidates) {
+      const midX = packed.get(c.id)!;
+      expect(midX).toBeLessThanOrEqual(c.targetX);
+    }
+    // Bundle uses the MIDDLE of the inset-feasible band (not crammed against
+    // either cable column). Tolerance accounts for clamp/even-span snap.
+    const bounds = spliceMidXInsetBounds(
+      sourceX,
+      targetX,
+      (sourceX + targetX) / 2,
+      defaultSideCircuitLabelSpan(),
+    );
+    const bandCenter = (bounds.lo + bounds.hi) / 2;
+    const mids = candidates.map((c) => packed.get(c.id)!);
+    const bundleCenter = (Math.min(...mids) + Math.max(...mids)) / 2;
+    expect(Math.abs(bundleCenter - bandCenter)).toBeLessThan(2);
+  });
+
+  it("deconflicts vertical legs across zones (different sourceX/targetX)", () => {
+    // Two zones whose verticals would land at the same X with overlapping Y
+    // ranges. Global pass must shift one of them by SPLICE_LANE_SEP.
+    const candidates = [
+      {
+        id: "zoneA",
+        sourceX: 100,
+        sourceY: 100,
+        targetX: 800,
+        targetY: 400,
+        rowOffset: 0,
+      },
+      {
+        id: "zoneB",
+        sourceX: 140,
+        sourceY: 110,
+        targetX: 820,
+        targetY: 410,
+        rowOffset: 0,
+      },
+    ];
+    const lanes = assignSpliceRoutingLanes(candidates);
+    const a = lanes.get("zoneA")!;
+    const b = lanes.get("zoneB")!;
+    expect(Math.abs(a.midX - b.midX)).toBeGreaterThanOrEqual(
+      SPLICE_LANE_SEP - 0.01,
+    );
+  });
+
+  it("deconflicts horizontal tracks across zones (same Y, overlapping X)", () => {
+    // Two zones with strands at the same source/target Y. Source-side H
+    // segments overlap unless target-side or source-side is offset onto a
+    // different lane Y. Global pass must apply a Y offset to one of them.
+    const candidates = [
+      {
+        id: "zoneA",
+        sourceX: 100,
+        sourceY: 200,
+        targetX: 1100,
+        targetY: 200,
+        rowOffset: 0,
+      },
+      {
+        id: "zoneB",
+        sourceX: 200,
+        sourceY: 200,
+        targetX: 1000,
+        targetY: 200,
+        rowOffset: 0,
+      },
+    ];
+    const lanes = assignSpliceRoutingLanes(candidates);
+    const a = lanes.get("zoneA")!;
+    const b = lanes.get("zoneB")!;
+    // At least one of them ended up on a different horizontal track.
+    const aSrcY = a.sourceHorizY ?? 200;
+    const bSrcY = b.sourceHorizY ?? 200;
+    const aTgtY = a.targetHorizY ?? 200;
+    const bTgtY = b.targetHorizY ?? 200;
+    expect(
+      Math.abs(aSrcY - bSrcY) >= SPLICE_LANE_SEP - 0.01 ||
+        Math.abs(aTgtY - bTgtY) >= SPLICE_LANE_SEP - 0.01,
     ).toBe(true);
   });
 

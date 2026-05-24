@@ -75,7 +75,7 @@ describe("connectionRowOffsets", () => {
     const offsets = connectionRowOffsets(graph, visual);
     const values = [...offsets.values()].sort((a, b) => a - b);
     const steps = values.slice(1).map((y, i) => y - values[i]!);
-    expect(steps.some((step) => step > FIBER_ROW_PITCH + TUBE_GROUP_GAP)).toBe(
+    expect(steps.some((step) => step >= FIBER_ROW_PITCH * 2)).toBe(
       true,
     );
   });

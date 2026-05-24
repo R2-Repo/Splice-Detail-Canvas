@@ -98,6 +98,7 @@ export const LAYOUT_RULE_IDS = [
   "EDGE-009",
   "EDGE-010",
   "EDGE-011",
+  "EDGE-012",
   "STR-001",
 ] as const;
 
@@ -176,6 +177,11 @@ export const LAYOUT_RULES: LayoutRuleMeta[] = [
   {
     id: "EDGE-011",
     title: "Splice strand segments never stack on the same horizontal or vertical track",
+    category: "edge",
+  },
+  {
+    id: "EDGE-012",
+    title: "Overlapping vertical center legs use distinct midX lanes",
     category: "edge",
   },
   { id: "STR-001", title: "Fiber strands fan toward canvas center", category: "strand" },
@@ -283,10 +289,10 @@ function tubeReachIncreases(visualCables: VisualCable[]): boolean {
   if (singles.length === 0 || multis.length === 0) return true;
 
   const maxSingleReach = Math.max(
-    ...singles.map((v) => tubeReachFromSheath(v.tubes.length)),
+    ...singles.map((v) => tubeReachFromSheath(v.tubes)),
   );
   const minMultiReach = Math.min(
-    ...multis.map((v) => tubeReachFromSheath(v.tubes.length)),
+    ...multis.map((v) => tubeReachFromSheath(v.tubes)),
   );
   return minMultiReach > maxSingleReach;
 }
@@ -416,7 +422,9 @@ function globalRowStepsOk(ctx: LayoutRuleContext): {
   const tubeBoundary =
     steps.some((s) => s === FIBER_ROW_PITCH + TUBE_GROUP_GAP) || values.length <= 1;
   const splitGap =
-    steps.some((s) => s > FIBER_ROW_PITCH + TUBE_GROUP_GAP) || values.length <= 1;
+    steps.some((s) => s > FIBER_ROW_PITCH + TUBE_GROUP_GAP) ||
+    steps.some((s) => s >= FIBER_ROW_PITCH * 2) ||
+    values.length <= 1;
 
   return { withinTube, tubeBoundary, splitGap };
 }
@@ -833,6 +841,48 @@ function tubeBundleRoutesAreSpaced(ctx: LayoutRuleContext): boolean {
     if (jogValues.length > 1) return false;
   }
 
+  return true;
+}
+
+function verticalCenterLegsSpaced(ctx: LayoutRuleContext): boolean {
+  const packed = buildPackedRoutingMap(ctx);
+  const byZone = new Map<
+    string,
+    Array<{ midX: number; y0: number; y1: number; id: string }>
+  >();
+
+  for (const conn of orderedFiberConnections(ctx.graph)) {
+    if (conn.kind !== "fiber") continue;
+    const endpoints = spliceHandleEndpoints(ctx, conn);
+    if (!endpoints) continue;
+    const lane = packed.get(conn.id);
+    if (!lane) continue;
+    const { sourceX, sourceY, targetX, targetY } = endpoints;
+    const srcHY = lane.sourceHorizY ?? sourceY;
+    const tgtHY = lane.targetHorizY ?? targetY;
+    const spliceY = (sourceY + targetY) / 2;
+    const y0 = Math.min(srcHY, spliceY, tgtHY);
+    const y1 = Math.max(srcHY, spliceY, tgtHY);
+    const zoneKey = spliceRoutingZoneKey(sourceX, targetX);
+    const list = byZone.get(zoneKey) ?? [];
+    list.push({ midX: lane.midX, y0, y1, id: conn.id });
+    byZone.set(zoneKey, list);
+  }
+
+  for (const members of byZone.values()) {
+    for (let i = 0; i < members.length; i++) {
+      for (let j = i + 1; j < members.length; j++) {
+        const a = members[i]!;
+        const b = members[j]!;
+        const yOverlap =
+          Math.min(a.y1, b.y1) - Math.max(a.y0, b.y0) > SPLICE_PATH_EPS;
+        if (!yOverlap) continue;
+        if (Math.abs(a.midX - b.midX) < SPLICE_LANE_SEP - SPLICE_PATH_EPS) {
+          return false;
+        }
+      }
+    }
+  }
   return true;
 }
 
@@ -1389,6 +1439,12 @@ export function checkLayoutRule(
         detail:
           findSpliceOverlapPair(ctx) ??
           "Splice strand segments stack on the same horizontal or vertical track",
+      };
+    case "EDGE-012":
+      return {
+        id,
+        ok: verticalCenterLegsSpaced(ctx),
+        detail: "Overlapping vertical center legs share the same midX lane",
       };
     case "STR-001":
       return {
