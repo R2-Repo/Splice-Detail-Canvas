@@ -59,3 +59,5 @@ None for Examples #1–#3 contract tests.
 3. [`LAYOUT_RULES.md`](./LAYOUT_RULES.md) — layout contract (31 rules)
 4. [`CSV_SEMANTICS.md`](./CSV_SEMANTICS.md) — parser/import semantics
 5. [`HANDOFF.md`](./HANDOFF.md) — last session only
+6. [`RULE_DICTIONARY.md`](./RULE_DICTIONARY.md) — plain-English rule IDs
+7. [`CANVAS_GLOSSARY.md`](./CANVAS_GLOSSARY.md) — diagram component names + screenshots

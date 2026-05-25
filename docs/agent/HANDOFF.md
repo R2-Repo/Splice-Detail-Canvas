@@ -4,32 +4,32 @@
 
 ## Last updated
 
-2026-05-25 — merged reset to `main`; programmatic QA complete.
+2026-05-25 — rule + canvas glossaries with live app screenshots.
 
 ## Done
 
-- **Merged** `chore/repo-reset-v1` → `main` (fast-forward)
-- **Programmatic QA:** `npm run verify` — 268 tests, all 31 layout rules pass Examples #1–#3 + SPI-215 / 300N_MAIN / production CSVs
-- **Baseline tag:** `layout-baseline-v1` on `main`
-- **Dev server:** app loads at http://localhost:5174/
+- **`RULE_DICTIONARY.md`** — plain-English lookup for all 31 rule IDs (“Say this when…”)
+- **`CANVAS_GLOSSARY.md`** — diagram component names + 4 screenshots from live app (Example #2)
+- **Screenshots:** `docs/reference/images/glossary/00–03*.png`
+- **Dev fixture loader:** `?fixture=example-2` + `public/fixtures/example-2.csv`
+- **`npm run verify`** passes
 
-## User visual QA (still needed)
-
-1. Hard refresh → import Example #1, #2, #3
-2. Import `SPI-215_I-80.csv`
-3. Compare to PNGs in `docs/reference/examples/`
-4. Report any visual issues with example # + screenshot
-
-## Next scoped fix (if visual QA finds overlap)
+## How to talk to agents now
 
 ```
-Baseline: layout-baseline-v1
-Task: EDGE-011 horizontal deconflict via midX only (no Y-track bends)
-Example: [user reports which]
-Rule ID: EDGE-011
-Files allowed: spliceEdgeRouting.ts only if approved
-Must pass: npm run verify
+Rule ID: TUB-001
+Example: #2
+Component: fusion splice dot (see CANVAS_GLOSSARY §4)
 ```
+
+## Browser / testing
+
+Agent can: open dev app, auto-import fixtures, Fit View, screenshot regions, run `npm run verify`. File-upload UI still manual for non-fixture CSVs.
+
+## Next
+
+- User visual QA vs reference PNGs
+- Scoped layout fixes using Rule ID + component name from glossaries
 
 ## Commands verified
 
