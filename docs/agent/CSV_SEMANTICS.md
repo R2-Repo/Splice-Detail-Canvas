@@ -1,6 +1,6 @@
 # Bentley splice CSV — semantics
 
-> **Status:** Parser validates on paired **CSV Splice Detail Examples #1–#3** (see matrix below). Canvas/layout must match **Splice Detail Example #1–#3** PNGs — see [`splice-detail-canvas-project-summary.md`](../reference/examples/splice-detail-canvas-project-summary.md).
+> **Status:** Parser validates on paired **CSV Splice Detail Examples #1–#3** (see matrix below). Canvas/layout must match **Splice Detail Example #1–#3** PNGs — see [`SCOPE.md`](./SCOPE.md) and `docs/reference/examples/`.
 > **Owner:** User + agents. Update when new example CSVs arrive.
 
 ## Import strategy (confirmed)

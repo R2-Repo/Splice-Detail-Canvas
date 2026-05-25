@@ -6,6 +6,17 @@
 
 ---
 
+## Stabilization gate (active)
+
+Until layout baseline holds for 5 consecutive sessions with no visual regression on Examples #1–#3:
+
+- No new layout rule IDs
+- No refactors of `spliceEdgeRouting.ts`
+- Bug fixes limited to: one example + one rule + max 2 files
+- PDF/export work deferred
+
+---
+
 ## Vision
 
 Replace the painful **Bentley OpenComms Designer splice-detail diagram** step. Bentley exports good **CSV data** but bad **diagrams**; polishing a splice detail in Bentley can take **~1 hour** even for a simple case.

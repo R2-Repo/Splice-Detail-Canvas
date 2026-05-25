@@ -1,59 +1,32 @@
 # Context
 
-> Agents: update this file when goals, scope, or decisions change.
+> Agents: keep this file current-only. History lives in git log and [`CHANGELOG.md`](./CHANGELOG.md).
 
-## Product
+## Baseline
 
-**Splice Detail Canvas** — frontend PWA that imports Bentley OpenComms CSV splice reports, auto-generates splice detail diagrams on a React Flow canvas, and allows drag-to-polish.
-
-**Full spec:** [`SCOPE.md`](./SCOPE.md)  
-**Reference:** [`docs/reference/`](../reference/) (CSVs, PDFs, images)
+- Branch/tag: `layout-baseline-v1` (created repo-reset session)
+- Verified: `npm run verify` + Examples #1–#3 CSV import
 
 ## Current phase
 
-**Import layout overhaul** — adaptive row gaps, height-balanced side assignment, barycenter cable stacking, hardened center routing.
+**Layout stabilization** — no new features until baseline holds across sessions.
 
-**Working:** CSV import → composite cable nodes; measured OS label spans; adaptive stub/split row gaps; barycenter stack order; runtime midX min-sep + EDGE-012 vertical deconfliction; drag rebalances `rowOffset`.
+## In scope NOW
 
-**Still to polish:** PNG parity; PDF export (needs dep approval).
+- Bug fixes: one example, one rule ID, max 2 source files per session
+- Doc/code hygiene (repo reset complete)
 
-## Layout invariants (locked)
+## Out of scope until stabilization complete
 
-**Canonical rules:** [`LAYOUT_RULES.md`](./LAYOUT_RULES.md) — 31 rule IDs (FBR/TUB/CBL/ROW/DOM/EDGE/STR).  
-**Enforcement:** `src/features/diagram/layoutRules.ts` + `layoutRules.test.ts` (Examples #1–#3 + production CSVs incl. `SPI-215_I-80.csv`).  
-**Agent rule:** `.cursor/rules/layout-rules.mdc` — **alwaysApply** (every agent request).
+- PDF export, PNG typography polish, new layout rule IDs
+- Refactors of `spliceEdgeRouting.ts` (split deferred)
+- New npm dependencies
 
-When adding layout behavior: update rules doc + checker + contract test in the same change.
+## Rule priority (conflicts)
 
-## Recent (2026-05-25)
+See [`RULE_PRIORITY.md`](./RULE_PRIORITY.md).
 
-- **TUB-001 horizontal breakout:** single-tube / on-sheath groups exit horizontal at fiber center; multi-tube fans from sheath center when groups exceed sheath height; `visualShiftY` collapsed handles only
-- **EDGE-004 strict two-bend routing:** all splice paths (fiber + collapsed butt) use ≤2 bends total; removed Y-track offsets that added extra elbows; deconflict via distinct `midX` only
-- **Dynamic layout on collapse toggle:** `refreshRowLayout` + `autoLayoutY` drag delta preservation
-- **Tube-shift v2 (TUB-008):** solver on final merged positions; ±24px collapsed / ±12px expanded
-
-## Recent (2026-05-24)
-
-- **Tube bundle routing (EDGE-010):** one parallel lane stack per bundle — row-offset/color order preserved at vertical elbows; shared horizontal deconflict + shared midX shift per bundle
-- **Cable stack order:** converging median barycenter (own rows + partner rows); joint permutation search (≤8 cables/side) minimizes strand crossings
-- **Cable Y alignment bugfix:** pair alignment no longer wiped by full `placeSide` re-anchor — uses `reflowStackPreservingY`; dominant + high-count pairs only; skips ring-cut multi-instance groups
-- **Adaptive row gaps:** stub/split boundaries use 24–48px (`adaptiveBoundaryRowGap`) instead of full cable height
-- **Side scoring:** `heightImbalance` term balances left/right stack height
-- **Stack order:** barycenter sort replaces hardcoded DROP/DK/2700/3175 heuristics
-- **Routing:** measured OS tags; shrinkable inset floor; `enforceDistinctMidXLanes`; EDGE-012 vertical deconflict
-- **Tubes:** per-tube horizontal length scales with fiber count
-- **Drag-scoped routing:** full diagram routing at import only; after import, moving a cable live-reroutes only that cable's strands; other edges use frozen `routingMidX`/`routingJogX`/horiz Y from import
-- **Cross-side bundle pack:** fixed 24px sep, anchored at the **median row-offset-proportional ideal midX** (with global maxRowOffset). Bundles spread along the full center span by global row position — low-row bundles near source, high-row bundles near target — instead of all clustering at the band midpoint
-- **Bundle trunk:** `bundleJogXForMembers` anchors trunk at the source-side midX (least-inward), so per-strand fan-out flows in the same direction as the source H — collapses into a clean single elbow, no reverse-direction overshoot
-- **Global deconfliction:** `assignSideHorizLaneYs` + `assignSideVertLaneXs` now share one occupied ledger across all routing zones — strands from different cable pairs no longer stack on the same H/V track
-- **Width-stable toggle:** `importLayoutWidthForGraph` always sizes for the expanded graph; full-butt collapse never resizes the diagram
-- **Wider center floor:** `minCenterGapForRowSpan` floor 200 → 320px so busy multi-cable diagrams have routing headroom
-- **Import fitView:** fit-width camera on import (full horizontal span; pan vertically when tall); layout width always `max(stage, content minimum)` for all diagram sizes
-- **EDGE-009 horizontal-first (full):** `inwardClearXBeforeVertical` / `targetClearXBeforeVertical` use OS-aware `minClearMidXForHandle` (not 60px-only); source always leads in on handle row; target leg mirrors (no vertical at `targetX`); segment model + EDGE-011 gap horizontals synced; EDGE-009 checker validates path segments via `splicePathsAvoidHandleColumnVertical`
-- **Per-lane stagger bend (EDGE-011/012):** Y-offset tracks use `laneClearXBeforeVertical` so strands no longer share one vertical bend X before center `midX`; gap horizontals + `hvDemarcatedSegments` synced; full center span used for midX lanes + bundle grouping
-- **Spacing fix (EDGE-011):** removed per-edge `midX` re-clamp that collapsed packed lanes onto one X; `assignGapBendLaneXs` assigns distinct gap bend X per strand; import/render trust frozen `routingMidX`
-
-## Decisions
+## Active decisions
 
 | Topic | Choice | Notes |
 |-------|--------|-------|
@@ -66,19 +39,23 @@ When adding layout behavior: update rules doc + checker + contract test in the s
 | Layout scope | Auto-layout on **import** + drag rowOffset/routing refresh for **moved cable only** | No full-diagram re-route after import |
 | Same-side routing | Inward H–V–H detour | 60px jog after measured OS column |
 | Center spacing | Packed midX lanes per zone | Min 24px; never collapse on infeasible inset |
-| Horizontal stacking | Offset Y tracks in gap | `assignSideHorizLaneYs` |
-| Vertical stacking | Offset midX when Y spans overlap | EDGE-012 / `assignSideVertLaneXs` |
 | Layout regressions | Rules doc + contract tests | Must pass before merge |
 | New npm deps | User approval required | PDF lib TBD |
-| Hosting | GitHub Pages via GitHub Actions | `deploy-github-pages.yml` |
+
+## Known issues (ordered)
+
+1. EDGE-011 deconflict vs EDGE-004 two-bend limit — EDGE-004 wins (see `RULE_PRIORITY.md`)
+2. PNG visual parity incomplete
+3. PDF export blocked on dep approval
 
 ## Blockers
 
-_None for CSV on Examples #1–#3 or production reference files (incl. SPI-215)._
+None for Examples #1–#3 contract tests.
 
-## Out of scope (until requested)
+## Canonical docs (read order)
 
-- Backend / auth / collaboration
-- Bentley API integration
-- PDF export library
-- Per-fiber / per-tube drag handles, inspector, undo/redo, SVG export
+1. [`SCOPE.md`](./SCOPE.md) — product requirements
+2. [`RULE_PRIORITY.md`](./RULE_PRIORITY.md) — conflict resolution
+3. [`LAYOUT_RULES.md`](./LAYOUT_RULES.md) — layout contract (31 rules)
+4. [`CSV_SEMANTICS.md`](./CSV_SEMANTICS.md) — parser/import semantics
+5. [`HANDOFF.md`](./HANDOFF.md) — last session only

@@ -22,3 +22,5 @@ This folder is **not** bundled into the production app unless you explicitly imp
 ## For agents
 
 Read files in this folder **only when** the user references them or when `docs/agent/SCOPE.md` points to them. Summarize relevant details in `CONTEXT.md` if they affect active work.
+
+Early project planning notes were archived to [`docs/archive/`](../archive/) — use `SCOPE.md` for active requirements.

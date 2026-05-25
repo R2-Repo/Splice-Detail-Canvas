@@ -7,15 +7,17 @@ Frontend-only React PWA: node/workflow canvas (React Flow). No backend unless th
 | File | Purpose |
 |------|---------|
 | `docs/agent/SCOPE.md` | Product vision, MVP, features, non-goals |
-| `docs/agent/CONTEXT.md` | Current focus, decisions, blockers |
+| `docs/agent/RULE_PRIORITY.md` | Rule conflict resolution when EDGE rules clash |
+| `docs/agent/CONTEXT.md` | Current focus, decisions, blockers (current-only) |
 | `docs/agent/HANDOFF.md` | Last session summary for the next agent |
 | `docs/agent/ARCHITECTURE.md` | Folders, patterns, extension points |
 | `docs/agent/LAYOUT_RULES.md` | **Must-keep** cable/tube/fiber layout invariants + test contract |
+| `docs/agent/CHANGELOG.md` | Archived session history (not active requirements) |
 | `docs/reference/` | User-provided examples, images, resources (when cited) |
 
 ## Workflow
 
-1. Read SCOPE, then CONTEXT + HANDOFF before coding.
+1. Read SCOPE → RULE_PRIORITY → CONTEXT + HANDOFF before coding (add LAYOUT_RULES for layout work).
 2. Plan in bullets; ask if requirements are unclear.
 3. Implement in `src/` using existing patterns.
 4. Run **`npm run test:layout`** (layout contract — **required every session** with code changes).

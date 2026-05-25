@@ -733,9 +733,6 @@ export function routingLaneFromData(
 
 export const MAX_SPLICE_BENDS = 2;
 
-/** @deprecated Bundle jog shares handle-row horizontals — no extra bend budget. */
-export const MAX_SPLICE_BENDS_WITH_BUNDLE_JOG = MAX_SPLICE_BENDS;
-
 export function maxSpliceBendsForLane(
   _sourceY: number,
   _targetY: number,
@@ -3448,7 +3445,7 @@ export function resetSpliceRouteRegistryForTests(): void {
   }
 }
 
-/** Preserved for future EDGE-011 Y-track lane work (unused under EDGE-004). */
+/** @internal EDGE-011 helpers — unused under EDGE-004; kept to satisfy noUnusedLocals. */
 export const spliceLaneYTrackHelpers = {
   assignSideHorizLaneYs,
   assignGapBendLaneXs,
