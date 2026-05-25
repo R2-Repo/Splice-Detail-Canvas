@@ -222,6 +222,34 @@ export function assignSpliceRoutingLanesFromHandleEntries(
   return assignSpliceRoutingLanes(candidates, sideSpans);
 }
 
+/** Re-rank row offsets from live handle Y, then pack lanes (drag / live handles). */
+export function assignSpliceRoutingLanesFromLiveHandles(
+  entries: SpliceHandleEntry[],
+  diagramCenterX?: number,
+): {
+  lanes: Map<string, SpliceRoutingLane>;
+  rowOffsets: Map<string, number>;
+} {
+  const bundled = entries.filter((entry) => entry.tubeBundleKey?.trim());
+  const rowOffsets = recomputeRowOffsetsFromHandleYs(
+    entries.filter((entry) => !entry.tubeBundleKey?.trim()),
+  );
+  for (const entry of bundled) {
+    rowOffsets.set(
+      entry.id,
+      entry.rowOffset ?? entry.fallbackLane * FIBER_ROW_PITCH,
+    );
+  }
+  const withRows = entries.map((entry) => ({
+    ...entry,
+    rowOffset: rowOffsets.get(entry.id) ?? entry.rowOffset ?? entry.fallbackLane,
+  }));
+  return {
+    lanes: assignSpliceRoutingLanesFromHandleEntries(withRows, diagramCenterX),
+    rowOffsets,
+  };
+}
+
 /** Rank 0 = highest (smallest row offset / sourceY) on the left cable. */
 export function sortSpliceRouteEntries(
   entries: SpliceEdgeRouteEntry[],
@@ -1048,13 +1076,18 @@ export type MidXLaneCandidate = {
   fullButtSplice?: boolean;
 };
 
+/** Ring-cut visual instances (`~1`, `~2`) share one route bundle. */
+export function normalizeVisualCableIdForRouting(visualCableId: string): string {
+  return visualCableId.replace(/~\d+$/, "");
+}
+
 /** Route bundle = one source buffer tube → one target cable. */
 export function spliceTubeBundleKey(
   sourceVisualCableId: string,
   sourceTubeColor: string,
   targetVisualCableId: string,
 ): string {
-  return `${sourceVisualCableId}|${sourceTubeColor}|${targetVisualCableId}`;
+  return `${normalizeVisualCableIdForRouting(sourceVisualCableId)}|${sourceTubeColor}|${normalizeVisualCableIdForRouting(targetVisualCableId)}`;
 }
 
 function bundleKeyForCandidate(candidate: MidXLaneCandidate): string {
@@ -1123,6 +1156,27 @@ export function bundleMidOrderInverts(members: MidXLaneCandidate[]): boolean {
   );
 }
 
+/** True when every member shares the same spliceMidOrderInverts result. */
+function bundleMidOrderInvertsUniform(members: MidXLaneCandidate[]): boolean {
+  const sorted = sortCandidatesByRowOrder(members);
+  if (sorted.length === 0) return false;
+  const anchor = sorted[0]!;
+  const anchorInverts = spliceMidOrderInverts(
+    anchor.sourceX,
+    anchor.sourceY,
+    anchor.targetX,
+    anchor.targetY,
+  );
+  return sorted.every((member) =>
+    spliceMidOrderInverts(
+      member.sourceX,
+      member.sourceY,
+      member.targetX,
+      member.targetY,
+    ) === anchorInverts,
+  );
+}
+
 function isCoherentTubeBundle(members: MidXLaneCandidate[]): boolean {
   return members.length > 1 && members.every((m) => m.tubeBundleKey);
 }
@@ -1158,6 +1212,24 @@ function packAnchorStart(
   return Math.min(Math.max(startUnclamped, startMin), startMax);
 }
 
+function tubeBundleSpansZones(members: MidXLaneCandidate[]): boolean {
+  const zones = new Set(
+    members.map((member) => spliceRoutingZoneKey(member.sourceX, member.targetX)),
+  );
+  return zones.size > 1;
+}
+
+/** Left/right cable columns for a tube bundle — row-aligned handles can differ per fiber. */
+function bundleRoutingColumnBounds(members: MidXLaneCandidate[]): {
+  sourceX: number;
+  targetX: number;
+} {
+  return {
+    sourceX: Math.min(...members.map((member) => member.sourceX)),
+    targetX: Math.max(...members.map((member) => member.targetX)),
+  };
+}
+
 /** Row-offset order preserved — one vertical elbow column per tube bundle. */
 function packCoherentTubeBundleMidXLanes(
   members: MidXLaneCandidate[],
@@ -1172,8 +1244,7 @@ function packCoherentTubeBundleMidXLanes(
   const sorted = sortCandidatesByRowOrder(members);
   if (sorted.length === 0) return result;
 
-  const sourceX = sorted[0]!.sourceX;
-  const targetX = sorted[0]!.targetX;
+  const { sourceX, targetX } = bundleRoutingColumnBounds(sorted);
   const bounds = spliceRoutingBounds(sourceX, targetX);
   const insetBounds = spliceMidXInsetBounds(
     sourceX,
@@ -1225,9 +1296,11 @@ function packCoherentTubeBundleMidXLanes(
     sideSpans,
   );
 
-  // Parallel bundle: midX follows row-offset / color order left→right.
+  const inverts =
+    bundleMidOrderInvertsUniform(sorted) && bundleMidOrderInverts(sorted);
   for (let i = 0; i < sorted.length; i++) {
-    result.set(sorted[i]!.id, start + i * sep);
+    const laneIndex = inverts ? sorted.length - 1 - i : i;
+    result.set(sorted[i]!.id, start + laneIndex * sep);
   }
   return result;
 }
@@ -1258,8 +1331,7 @@ function packMultipleCoherentTubeBundlesMidXLanes(
 
   for (let bi = 0; bi < orderedBundles.length; bi++) {
     const sorted = sortCandidatesByRowOrder(orderedBundles[bi]!);
-    const sourceX = sorted[0]!.sourceX;
-    const targetX = sorted[0]!.targetX;
+    const { sourceX, targetX } = bundleRoutingColumnBounds(sorted);
     const start = clampMidXForMinHorizontalInset(
       blockStart,
       sourceX,
@@ -1267,13 +1339,24 @@ function packMultipleCoherentTubeBundlesMidXLanes(
       centerX,
       sideSpans,
     );
+    const inverts =
+      bundleMidOrderInvertsUniform(sorted) && bundleMidOrderInverts(sorted);
     for (let i = 0; i < sorted.length; i++) {
-      result.set(sorted[i]!.id, start + i * minSep);
+      const laneIndex = inverts ? sorted.length - 1 - i : i;
+      result.set(sorted[i]!.id, start + laneIndex * minSep);
     }
     blockStart = start + blockSpans[bi]! + minSep;
   }
 
   return result;
+}
+
+function sameSideLoopBundleSkipsJogX(members: MidXLaneCandidate[]): boolean {
+  if (!isCoherentTubeBundle(members)) return false;
+  const sorted = sortCandidatesByRowOrder(members);
+  if (!isSameColumnSplice(sorted[0]!.sourceX, sorted[0]!.targetX)) return false;
+  if (!bundleMidOrderInvertsUniform(sorted)) return false;
+  return bundleMidOrderInverts(sorted);
 }
 
 function bundleJogXForMembers(
@@ -1365,27 +1448,31 @@ function packSameSideMidXLanes(
   const bundles = groupCandidatesByTubeBundle(candidates);
   if (bundles.length === 1 && isCoherentTubeBundle(bundles[0]!)) {
     const sorted = sortCandidatesByRowOrder(bundles[0]!);
-    const baseRun =
-      circuitLabelSpanForSide(
-        canvasSideForHandle(columnX, diagramCenterX),
-        sideSpans,
-      ) + MIN_SPLICE_HORIZONTAL_INSET;
-    const base = columnX + inward * baseRun;
-    for (let i = 0; i < sorted.length; i++) {
-      const raw = base + inward * i * sep;
-      const candidate = sorted[i]!;
-      result.set(
-        candidate.id,
-        clampMidXForMinHorizontalInset(
-          raw,
-          candidate.sourceX,
-          candidate.targetX,
-          diagramCenterX,
+    if (bundleMidOrderInvertsUniform(sorted)) {
+      const downwardLoop = bundleMidOrderInverts(sorted);
+      const baseRun =
+        circuitLabelSpanForSide(
+          canvasSideForHandle(columnX, diagramCenterX),
           sideSpans,
-        ),
-      );
+        ) + MIN_SPLICE_HORIZONTAL_INSET;
+      const base = columnX + inward * baseRun;
+      for (let i = 0; i < sorted.length; i++) {
+        const laneIndex = downwardLoop ? i : sorted.length - 1 - i;
+        const raw = base + inward * laneIndex * sep;
+        const candidate = sorted[i]!;
+        result.set(
+          candidate.id,
+          clampMidXForMinHorizontalInset(
+            raw,
+            candidate.sourceX,
+            candidate.targetX,
+            diagramCenterX,
+            sideSpans,
+          ),
+        );
+      }
+      return result;
     }
-    return result;
   }
 
   const downward: MidXLaneCandidate[] = [];
@@ -1628,7 +1715,26 @@ function enforceDistinctMidXLanesForMembers(
 ): void {
   const sorted = sortCandidatesByRowOrder(members);
   if (sorted.length === 0) return;
-  let prevMid = result.get(sorted[0]!.id)!;
+  const firstMid = result.get(sorted[0]!.id)!;
+  const secondMid =
+    sorted.length > 1 ? result.get(sorted[1]!.id)! : firstMid;
+  const descending = secondMid < firstMid - SPLICE_PATH_EPS;
+
+  if (descending) {
+    let prevMid = firstMid;
+    for (let i = 1; i < sorted.length; i++) {
+      const id = sorted[i]!.id;
+      let mid = result.get(id)!;
+      if (prevMid - mid < minSep - SPLICE_PATH_EPS) {
+        mid = prevMid - minSep;
+        result.set(id, mid);
+      }
+      prevMid = mid;
+    }
+    return;
+  }
+
+  let prevMid = firstMid;
   for (let i = 1; i < sorted.length; i++) {
     const id = sorted[i]!.id;
     let mid = result.get(id)!;
@@ -1679,13 +1785,6 @@ export function assignSpliceMidXLanes(
   sideSpans: SideCircuitLabelSpan = defaultSideCircuitLabelSpan(),
 ): Map<string, number> {
   const diagramCenterX = globalDiagramCenterX(candidates);
-  const byZone = new Map<string, MidXLaneCandidate[]>();
-  for (const candidate of candidates) {
-    const key = spliceRoutingZoneKey(candidate.sourceX, candidate.targetX);
-    const list = byZone.get(key) ?? [];
-    list.push(candidate);
-    byZone.set(key, list);
-  }
 
   // Global max row offset across all candidates — threaded into per-zone
   // packing so each zone's bundle anchors at its row-offset-proportional
@@ -1697,6 +1796,40 @@ export function assignSpliceMidXLanes(
   );
 
   const result = new Map<string, number>();
+  const prepackedIds = new Set<string>();
+
+  // Dominant-pair row alignment can place fibers from one buffer tube on
+  // different handle X columns. Pack those bundles once globally so midX
+  // order stays contiguous in color/row-offset order.
+  const splitZoneBundles = groupCandidatesByTubeBundle(
+    candidates.filter((candidate) => candidate.tubeBundleKey),
+  ).filter(
+    (bundle) => isCoherentTubeBundle(bundle) && tubeBundleSpansZones(bundle),
+  );
+
+  for (const bundle of splitZoneBundles) {
+    const packed = packCoherentTubeBundleMidXLanes(
+      bundle,
+      SPLICE_LANE_SEP,
+      diagramCenterX,
+      sideSpans,
+      globalMaxRowOffset,
+    );
+    for (const [id, midX] of packed) {
+      result.set(id, midX);
+      prepackedIds.add(id);
+    }
+  }
+
+  const byZone = new Map<string, MidXLaneCandidate[]>();
+  for (const candidate of candidates) {
+    if (prepackedIds.has(candidate.id)) continue;
+    const key = spliceRoutingZoneKey(candidate.sourceX, candidate.targetX);
+    const list = byZone.get(key) ?? [];
+    list.push(candidate);
+    byZone.set(key, list);
+  }
+
   for (const group of byZone.values()) {
     const packed = packMidXLanes(
       group,
@@ -1710,6 +1843,15 @@ export function assignSpliceMidXLanes(
       result.set(id, midX);
     }
   }
+
+  for (const bundle of groupCandidatesByTubeBundle(
+    candidates.filter((candidate) => candidate.tubeBundleKey),
+  )) {
+    if (isCoherentTubeBundle(bundle)) {
+      enforceDistinctMidXLanesForMembers(result, bundle, SPLICE_LANE_SEP);
+    }
+  }
+
   return result;
 }
 
@@ -2065,18 +2207,21 @@ export function recomputeRowOffsetsFromHandleYs(
     sourceY: number;
     targetX: number;
     targetY: number;
+    tubeBundleKey?: string;
   }>,
 ): Map<string, number> {
-  const byZone = new Map<string, typeof entries>();
+  const byGroup = new Map<string, typeof entries>();
   for (const entry of entries) {
-    const key = spliceRoutingZoneKey(entry.sourceX, entry.targetX);
-    const list = byZone.get(key) ?? [];
+    const key = entry.tubeBundleKey?.trim()
+      ? `bundle::${entry.tubeBundleKey}`
+      : spliceRoutingZoneKey(entry.sourceX, entry.targetX);
+    const list = byGroup.get(key) ?? [];
     list.push(entry);
-    byZone.set(key, list);
+    byGroup.set(key, list);
   }
 
   const result = new Map<string, number>();
-  for (const group of byZone.values()) {
+  for (const group of byGroup.values()) {
     const sorted = [...group].sort(
       (a, b) =>
         Math.min(a.sourceY, a.targetY) - Math.min(b.sourceY, b.targetY) ||
@@ -2099,6 +2244,7 @@ export function assignSpliceRoutingLanes(
   const diagramCenterX = globalDiagramCenterX(candidates);
   const midXMap = assignSpliceMidXLanes(candidates, sideSpans);
   const result = new Map<string, SpliceRoutingLane>();
+  const candidateById = new Map(candidates.map((c) => [c.id, c]));
   const byBundle = new Map<
     string,
     Array<{ id: string; midX: number; sourceX: number }>
@@ -2115,7 +2261,12 @@ export function assignSpliceRoutingLanes(
   }
 
   for (const members of byBundle.values()) {
-    const jogX = bundleJogXForMembers(members, diagramCenterX);
+    const fullMembers = members
+      .map((member) => candidateById.get(member.id))
+      .filter((member): member is MidXLaneCandidate => member !== undefined);
+    const jogX = sameSideLoopBundleSkipsJogX(fullMembers)
+      ? undefined
+      : bundleJogXForMembers(members, diagramCenterX);
     for (const member of members) {
       if (!Number.isFinite(member.midX)) continue;
       const laneJogX =
@@ -3073,11 +3224,39 @@ function removeEntry(id: string) {
 }
 
 let activeDragCableNodeId: string | null = null;
+let dragRoutingSnapshot: Map<string, SpliceRoutingLane> | null = null;
+const dragRoutingListeners = new Set<() => void>();
+
+function notifyDragRoutingListeners() {
+  for (const listener of dragRoutingListeners) listener();
+}
+
+/** Full-graph lane snapshot while a cable is dragged (avoids partial-registry packing). */
+export function publishDragRoutingSnapshot(
+  entries: SpliceHandleEntry[],
+  diagramCenterX?: number,
+): void {
+  if (activeDragCableNodeId === null) return;
+  dragRoutingSnapshot = assignSpliceRoutingLanesFromLiveHandles(
+    entries,
+    diagramCenterX,
+  ).lanes;
+  notifyDragRoutingListeners();
+}
+
+function getDragRoutingLane(edgeId: string): SpliceRoutingLane | undefined {
+  return dragRoutingSnapshot?.get(edgeId);
+}
+
+function clearDragRoutingSnapshot(): void {
+  dragRoutingSnapshot = null;
+}
 
 /** Limit live lane registry to one cable while the user drags it. */
 export function setActiveDragCableNodeId(nodeId: string | null): void {
   activeDragCableNodeId = nodeId;
   if (nodeId === null) {
+    clearDragRoutingSnapshot();
     registry.entries.clear();
     registry.signature = "";
     notifySubscribers();
@@ -3088,7 +3267,7 @@ export function getActiveDragCableNodeId(): string | null {
   return activeDragCableNodeId;
 }
 
-function routingMidXForRender(
+export function routingMidXForRender(
   midX: number,
   sourceX: number,
   targetX: number,
@@ -3146,7 +3325,16 @@ export function useRoutingLaneIndex(
   const isDragAffected =
     dragCableNodeId !== null &&
     (sourceNodeId === dragCableNodeId || targetNodeId === dragCableNodeId);
-  const useLiveRegistry = enabled && isDragAffected;
+  const useLiveRegistry = enabled && isDragAffected && dragRoutingSnapshot === null;
+
+  useLayoutEffect(() => {
+    if (!isDragAffected || !enabled) return;
+    const sub = () => bump();
+    dragRoutingListeners.add(sub);
+    return () => {
+      dragRoutingListeners.delete(sub);
+    };
+  }, [edgeId, bump, isDragAffected, enabled]);
 
   useLayoutEffect(() => {
     if (!useLiveRegistry) return;
@@ -3223,6 +3411,66 @@ export function useRoutingLaneIndex(
       targetHorizY: fullButtSplice ? undefined : storedLane.targetHorizY,
       sourceBendX: fullButtSplice ? undefined : storedLane.sourceBendX,
       targetBendX: fullButtSplice ? undefined : storedLane.targetBendX,
+    };
+  }
+
+  if (isDragAffected && enabled) {
+    const dragLane = getDragRoutingLane(edgeId) ?? storedLane;
+    if (dragLane) {
+      const midX = fullButtSplice
+        ? resolveButtSpliceMidX(
+            sourceX,
+            targetX,
+            resolvedCenterX,
+            sideSpans,
+            fallbackLane,
+            laneCountHint,
+          )
+        : routingMidXForRender(
+            dragLane.midX,
+            sourceX,
+            targetX,
+            resolvedCenterX,
+            sideSpans,
+            sourceTagWidth,
+            targetTagWidth,
+          );
+      return {
+        routingLane: fallbackLane,
+        activeLaneCount: Math.max(1, laneCountHint),
+        maxRowOffset,
+        midX,
+        jogX: fullButtSplice ? undefined : dragLane.jogX,
+        sourceHorizY: fullButtSplice ? undefined : dragLane.sourceHorizY,
+        targetHorizY: fullButtSplice ? undefined : dragLane.targetHorizY,
+        sourceBendX: fullButtSplice ? undefined : dragLane.sourceBendX,
+        targetBendX: fullButtSplice ? undefined : dragLane.targetBendX,
+      };
+    }
+  }
+
+  if (!useLiveRegistry) {
+    const midX = routingMidXForRender(
+      resolveSpliceMidX(sourceX, sourceY, targetX, targetY, {
+        rowOffset,
+        maxRowOffset,
+        routingLane: fallbackLane,
+        laneCount: Math.max(1, laneCountHint),
+        diagramCenterX: resolvedCenterX,
+        sideCircuitSpan: sideSpans,
+      }),
+      sourceX,
+      targetX,
+      resolvedCenterX,
+      sideSpans,
+      sourceTagWidth,
+      targetTagWidth,
+    );
+    return {
+      routingLane: fallbackLane,
+      activeLaneCount: Math.max(1, laneCountHint),
+      maxRowOffset,
+      midX,
     };
   }
 

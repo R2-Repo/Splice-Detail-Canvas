@@ -13,8 +13,8 @@
 
 ## In scope NOW
 
+- **3161.4 BL tube bundle crossing** — import + post-drag order fixed; user visual re-test pending (spur bend bug deferred)
 - Bug fixes: one example, one rule ID, max 2 source files per session
-- User visual QA on Examples #1–#3 (screenshot vs reference PNGs)
 
 ## Out of scope until stabilization complete
 

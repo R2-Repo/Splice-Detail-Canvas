@@ -911,7 +911,12 @@ function centerLanesPreserveTubeGrouping(ctx: LayoutRuleContext): boolean {
     if (bundle.length <= 1) continue;
     bundle.sort((a, b) => a.rowOffset - b.rowOffset);
     for (let i = 1; i < bundle.length; i++) {
-      if (bundle[i]!.midX < bundle[i - 1]!.midX - Y_TOLERANCE) {
+      const prev = bundle[i - 1]!;
+      const curr = bundle[i]!;
+      if (prev.inverts !== curr.inverts) continue;
+      if (prev.inverts) {
+        if (curr.midX > prev.midX + Y_TOLERANCE) return false;
+      } else if (curr.midX < prev.midX - Y_TOLERANCE) {
         return false;
       }
     }

@@ -30,9 +30,9 @@ import {
 } from "@/features/diagram/cableDisplaySide";
 import { spliceNodeTypes } from "@/features/canvas/nodeTypes";
 import {
-  assignSpliceRoutingLanesFromHandleEntries,
+  assignSpliceRoutingLanesFromLiveHandles,
   buildSpliceHandleEntries,
-  recomputeRowOffsetsFromHandleYs,
+  publishDragRoutingSnapshot,
   routingLaneDataFromLane,
   setActiveDragCableNodeId,
 } from "@/features/canvas/edges/spliceEdgeRouting";
@@ -103,7 +103,7 @@ function boundsForOutwardDrag(
 }
 
 function WorkflowCanvasInner() {
-  const { getNodesBounds, setViewport } = useReactFlow();
+  const { getNodesBounds, setViewport, getNodes, getEdges } = useReactFlow();
   const nodesInitialized = useNodesInitialized();
   const updateNodeInternals = useUpdateNodeInternals();
   const fitViewRequestRef = useRef(0);
@@ -139,6 +139,25 @@ function WorkflowCanvasInner() {
   const [collapseFullButtSplices, setCollapseFullButtSplices] = useState(false);
 
   collapseRef.current = collapseFullButtSplices;
+
+  const refreshDragRouting = useCallback(
+    (draggedNode: Node) => {
+      const graph = graphRef.current;
+      if (!graph || draggedNode.type !== "cable") return;
+      const allNodes = getNodes().map((n) =>
+        n.id === draggedNode.id ? draggedNode : n,
+      );
+      const allEdges = getEdges();
+      const { visualCables } = buildVisualCablesForLayout(graph);
+      const handleEntries = buildSpliceHandleEntries(
+        allNodes,
+        allEdges,
+        visualCables,
+      );
+      publishDragRoutingSnapshot(handleEntries, layoutWidthRef.current / 2);
+    },
+    [getEdges, getNodes],
+  );
 
   const stageWidthForLayout = useCallback((): number => {
     return stageRef.current?.clientWidth ?? stageWidthRef.current ?? 0;
@@ -398,11 +417,15 @@ function WorkflowCanvasInner() {
     });
   }, [applyGraph, resolveLayoutWidth]);
 
-  const onNodeDragStart: OnNodeDrag<Node> = useCallback((_, node) => {
-    if (node.type === "cable") {
-      setActiveDragCableNodeId(node.id);
-    }
-  }, []);
+  const onNodeDragStart: OnNodeDrag<Node> = useCallback(
+    (_, node) => {
+      if (node.type === "cable") {
+        setActiveDragCableNodeId(node.id);
+        refreshDragRouting(node);
+      }
+    },
+    [refreshDragRouting],
+  );
 
   const onNodeDragStop: OnNodeDrag<Node> = useCallback(
     (_, node) => {
@@ -432,6 +455,7 @@ function WorkflowCanvasInner() {
 
       let layoutWidth = layoutWidthRef.current;
       let bounds = xBoundsRef.current;
+      const prevCenterX = layoutWidth / 2;
       ({ layoutWidth, bounds } = boundsForOutwardDrag(
         node.position.x,
         newSide,
@@ -462,22 +486,31 @@ function WorkflowCanvasInner() {
           const { visualCables } = graph
             ? buildVisualCablesForLayout(graph)
             : { visualCables: [] };
-          const handleEntries = buildSpliceHandleEntries(
+          const allHandleEntries = buildSpliceHandleEntries(
             nextNodes,
             currentEdges,
             visualCables,
-            { cableNodeId: node.id },
           );
-          const rowOffsets = recomputeRowOffsetsFromHandleYs(handleEntries);
-          const dragRouting =
-            assignSpliceRoutingLanesFromHandleEntries(
-              handleEntries,
-              layoutWidth / 2,
+          const centerX = layoutWidth / 2;
+          const centerChanged = Math.abs(centerX - prevCenterX) > 0.5;
+          const { lanes: dragRouting, rowOffsets } =
+            assignSpliceRoutingLanesFromLiveHandles(
+              allHandleEntries,
+              centerX,
             );
           const nextEdges = currentEdges.map((edge) => {
             const touchesDragged =
               edge.source === node.id || edge.target === node.id;
             if (!touchesDragged || edge.type !== "splice") {
+              if (edge.type === "splice" && centerChanged) {
+                return {
+                  ...edge,
+                  data: {
+                    ...(edge.data as Record<string, unknown>),
+                    diagramCenterX: centerX,
+                  },
+                };
+              }
               return edge;
             }
 
@@ -488,6 +521,7 @@ function WorkflowCanvasInner() {
               ...edge,
               data: {
                 ...data,
+                diagramCenterX: centerX,
                 ...(rowOffset !== undefined ? { rowOffset } : {}),
                 ...(lane ? routingLaneDataFromLane(lane) : {}),
               },
@@ -516,6 +550,7 @@ function WorkflowCanvasInner() {
   const onNodeDrag: OnNodeDrag<Node> = useCallback(
     (_, node) => {
       if (node.type !== "cable") return;
+      refreshDragRouting(node);
       const centerX = layoutWidthRef.current / 2;
       const nextSide = displaySideFromCanvasX(node.position.x, centerX);
       const prevSide = (node.data as CableNodeData).side;
@@ -531,7 +566,7 @@ function WorkflowCanvasInner() {
         ),
       );
     },
-    [setNodes],
+    [refreshDragRouting, setNodes],
   );
 
   const onEdgeClick = useCallback(

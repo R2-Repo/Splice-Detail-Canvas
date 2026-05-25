@@ -28,6 +28,7 @@ import {
   enforceMinHorizontalInset,
   horizontalInsetOkFromHandle,
   hvDemarcatedPathsCross,
+  isCenterVerticalCrossingHandleRowLeadIn,
   inwardClearXBeforeVertical,
   MAX_SPLICE_BENDS,
   minClearMidXForHandle,
@@ -832,8 +833,7 @@ describe("spliceEdgeRouting", () => {
     ];
     const candidates = colors.map((id, index) => {
       const sourceY = 100 + index * FIBER_ROW_PITCH;
-      // Simulate misaligned target handles: top fibers bend down, bottom bend up.
-      const targetY = 520 - index * FIBER_ROW_PITCH;
+      const targetY = 400 + index * FIBER_ROW_PITCH;
       return {
         id,
         sourceX,
@@ -848,16 +848,49 @@ describe("spliceEdgeRouting", () => {
     const packed = assignSpliceRoutingLanes(candidates);
     const mids = colors.map((id) => packed.get(id)!.midX);
 
+    // Downward splice: top row (BL) gets outermost (largest) midX.
+    expect(mids[0]!).toBeGreaterThan(mids[colors.length - 1]!);
     for (let i = 1; i < mids.length; i++) {
-      expect(mids[i]! - mids[i - 1]!).toBeGreaterThanOrEqual(
+      expect(mids[i - 1]! - mids[i]!).toBeGreaterThanOrEqual(
         SPLICE_LANE_SEP - 0.01,
       );
+    }
+
+    for (let i = 0; i < colors.length; i++) {
+      for (let j = i + 1; j < colors.length; j++) {
+        const a = candidates[i]!;
+        const b = candidates[j]!;
+        expect(
+          hvDemarcatedPathsCross(
+            sourceX,
+            a.sourceY,
+            targetX,
+            a.targetY,
+            packed.get(a.id)!.midX,
+            sourceX,
+            b.sourceY,
+            targetX,
+            b.targetY,
+            packed.get(b.id)!.midX,
+          ),
+        ).toBe(false);
+      }
     }
 
     const trunkXs = colors
       .map((id) => packed.get(id)!.jogX)
       .filter((x): x is number => x !== undefined);
     expect(new Set(trunkXs).size).toBeLessThanOrEqual(1);
+    const blLane = packed.get("bl")!;
+    const { leftPath: blPath } = buildDemarcatedSplicePaths(
+      sourceX,
+      candidates[0]!.sourceY,
+      targetX,
+      candidates[0]!.targetY,
+      blLane.midX,
+      blLane.jogX,
+    );
+    expect(blPath).toContain(`${blLane.midX},${candidates[0]!.sourceY}`);
   });
 
   it("assignSpliceRoutingLanes spaces tube bundle lanes and shares jogX trunk", () => {
@@ -966,6 +999,109 @@ describe("spliceEdgeRouting", () => {
     for (const lane of lanes) {
       expect(lane.midX).toBeGreaterThanOrEqual(minMid - 0.01);
     }
+  });
+
+  it("packs same-side loop bundle with crossing source bend on downward splices", () => {
+    const columnX = 200;
+    const bundleKey = "vc-left|BL|vc-left-lower";
+    const colors = ["bl", "or", "gr", "br", "sl", "wh"];
+    const candidates = colors.map((id, index) => ({
+      id,
+      sourceX: columnX,
+      sourceY: 100 + index * FIBER_ROW_PITCH,
+      targetX: columnX,
+      targetY: 400 + index * FIBER_ROW_PITCH,
+      rowOffset: index * FIBER_ROW_PITCH,
+      tubeBundleKey: bundleKey,
+    }));
+
+    const packed = assignSpliceRoutingLanes(candidates, { left: 66, right: 120 });
+    const bl = packed.get("bl")!;
+    const wh = packed.get("wh")!;
+
+    expect(bl.midX).toBeLessThan(wh.midX);
+    expect(bl.jogX).toBeUndefined();
+    expect(wh.jogX).toBeUndefined();
+
+    const sideSpans = { left: 66, right: 120 };
+    const centerX = 700;
+    const blSegs = spliceRouteSegments(
+      columnX,
+      candidates[0]!.sourceY,
+      columnX,
+      candidates[0]!.targetY,
+      bl.midX,
+      undefined,
+      undefined,
+      sideSpans,
+      centerX,
+    );
+    const whSegs = spliceRouteSegments(
+      columnX,
+      candidates[5]!.sourceY,
+      columnX,
+      candidates[5]!.targetY,
+      wh.midX,
+      undefined,
+      undefined,
+      sideSpans,
+      centerX,
+    );
+    let sourceBendCrosses = false;
+    for (const vertical of blSegs) {
+      for (const horizontal of whSegs) {
+        if (
+          isCenterVerticalCrossingHandleRowLeadIn(
+            vertical,
+            horizontal,
+            candidates[5]!.sourceY,
+          )
+        ) {
+          sourceBendCrosses = true;
+        }
+      }
+    }
+    expect(sourceBendCrosses).toBe(true);
+  });
+
+  it("packs same-side loop bundle with organized source bend on upward splices", () => {
+    const columnX = 200;
+    const bundleKey = "vc-left|BL|vc-left-upper";
+    const colors = ["bl", "or", "gr", "br", "sl", "wh"];
+    const candidates = colors.map((id, index) => ({
+      id,
+      sourceX: columnX,
+      sourceY: 400 + index * FIBER_ROW_PITCH,
+      targetX: columnX,
+      targetY: 100 + index * FIBER_ROW_PITCH,
+      rowOffset: index * FIBER_ROW_PITCH,
+      tubeBundleKey: bundleKey,
+    }));
+
+    const packed = assignSpliceRoutingLanes(candidates, { left: 66, right: 120 });
+    const bl = packed.get("bl")!;
+    const wh = packed.get("wh")!;
+
+    expect(bl.midX).toBeGreaterThan(wh.midX);
+    expect(bl.jogX).toBeDefined();
+    expect(bl.jogX).toBe(wh.midX);
+    expect(wh.jogX).toBeUndefined();
+    expect(
+      hvDemarcatedPathsCross(
+        columnX,
+        candidates[0]!.sourceY,
+        columnX,
+        candidates[0]!.targetY,
+        bl.midX,
+        columnX,
+        candidates[5]!.sourceY,
+        columnX,
+        candidates[5]!.targetY,
+        wh.midX,
+        bl.jogX,
+        wh.jogX,
+      ),
+    ).toBe(false);
   });
 
   it("packMidXLanes separates same-side vertical lanes toward center", () => {

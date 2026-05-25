@@ -4,36 +4,21 @@
 
 ## Last updated
 
-2026-05-25 — rule + canvas glossaries with live app screenshots.
+2026-05-25 — post-drag bundle order fix (3161.4 BL 1–12).
 
 ## Done
 
-- **`RULE_DICTIONARY.md`** — plain-English lookup for all 31 rule IDs (“Say this when…”)
-- **`CANVAS_GLOSSARY.md`** — diagram component names + 4 screenshots from live app (Example #2)
-- **Screenshots:** `docs/reference/images/glossary/00–03*.png`
-- **Dev fixture loader:** `?fixture=example-2` + `public/fixtures/example-2.csv`
-- **`npm run verify`** passes
-
-## How to talk to agents now
-
-```
-Rule ID: TUB-001
-Example: #2
-Component: fusion splice dot (see CANVAS_GLOSSARY §4)
-```
-
-## Browser / testing
-
-Agent can: open dev app, auto-import fixtures, Fit View, screenshot regions, run `npm run verify`. File-upload UI still manual for non-fixture CSVs.
+- **Post-drag ordering:** `recomputeRowOffsetsFromHandleYs` groups by `tubeBundleKey` (not routing zone); bundled fibers keep import `rowOffset` in `assignSpliceRoutingLanesFromLiveHandles`
+- **Live drag:** `publishDragRoutingSnapshot` on drag start/move; `useRoutingLaneIndex` reads full-graph snapshot (no partial registry)
+- **Drag stop:** `assignSpliceRoutingLanesFromLiveHandles` + fresh `diagramCenterX` when layout width expands
+- **`visualQa3161.test.ts`** — simulated cable Y drag regression for BL 1–12 monotonic midX
+- Prior: split-zone global pack, `~N` bundle key normalize, import-time BL bundle fix
 
 ## Next
 
-- User visual QA vs reference PNGs
-- Scoped layout fixes using Rule ID + component name from glossaries
+- User re-test: load `?fixture=3161.4`, drag a cable node — BL 1–12 should stay nested parallel
+- **Deferred:** BL/OR spur loop-back bends after drag (non-90° offshoot) — separate issue
 
 ## Commands verified
 
-- `npm run test:layout`
-- `npm run check`
-- `npm run test:ci`
-- `npm run build`
+- `npm run verify`
