@@ -9,6 +9,7 @@ import {
   buildSplicePath,
   bundleMidOrderInverts,
   hvDemarcatedPathsCross,
+  reconcileBundleJogXForRender,
   routingMidXForRender,
   spliceMidOrderInverts,
 } from "@/features/canvas/edges/spliceEdgeRouting";
@@ -265,6 +266,67 @@ describe("visual QA — 3161.4 BL tube cross-side bundle", () => {
     expect(mids[0]).toBeGreaterThan(mids[mids.length - 1]!);
     for (let i = 1; i < mids.length; i++) {
       expect(mids[i - 1]! - mids[i]!).toBeGreaterThanOrEqual(23);
+    }
+  });
+
+  it("BL 1-2 render paths do not backtrack on source horizontals", () => {
+    const members = blTubeMembers(2);
+    const ordered = [...members].sort(
+      (a, b) => a.pair.endpointA.fiberNumber - b.pair.endpointA.fiberNumber,
+    );
+    const entries = buildSpliceHandleEntries(nodes, edges, ctx.visualCables);
+    const centerX = ctx.layoutWidth / 2;
+    for (const conn of ordered) {
+      const edge = edges.find((e) => e.id === `splice-${conn.id}`)!;
+      const entry = entries.find((e) => e.id === edge.id)!;
+      const data = edge.data as {
+        routingMidX?: number;
+        routingJogX?: number;
+        diagramCenterX?: number;
+      };
+      const renderMidX = routingMidXForRender(
+        data.routingMidX!,
+        entry.sourceX,
+        entry.targetX,
+        data.diagramCenterX ?? centerX,
+        entry.sideCircuitSpan ?? { left: 66, right: 66 },
+        entry.sourceTagWidth ?? 0,
+        entry.targetTagWidth ?? 0,
+      );
+      const renderJogX = reconcileBundleJogXForRender(
+        renderMidX,
+        data.routingJogX,
+        entry.sourceX,
+        data.diagramCenterX ?? centerX,
+      );
+      const { leftPath } = buildSplicePath(
+        entry.sourceX,
+        entry.sourceY,
+        entry.targetX,
+        entry.targetY,
+        renderMidX,
+        renderJogX,
+        undefined,
+        entry.sideCircuitSpan ?? { left: 66, right: 66 },
+        data.diagramCenterX ?? centerX,
+        entry.sourceTagWidth ?? 0,
+        entry.targetTagWidth ?? 0,
+      );
+      const horizTokens = leftPath.match(/L ([\d.]+),([\d.]+)/g) ?? [];
+      const sameRowXs: number[] = [];
+      for (const token of horizTokens) {
+        const match = token.match(/L ([\d.]+),([\d.]+)/);
+        if (!match) continue;
+        const x = Number(match[1]);
+        const y = Number(match[2]);
+        if (Math.abs(y - entry.sourceY) > 0.5) break;
+        sameRowXs.push(x);
+      }
+      const inward = entry.sourceX <= (data.diagramCenterX ?? centerX) ? 1 : -1;
+      for (let i = 1; i < sameRowXs.length; i++) {
+        const delta = sameRowXs[i]! - sameRowXs[i - 1]!;
+        expect(inward > 0 ? delta : -delta).toBeGreaterThan(-0.01);
+      }
     }
   });
 });

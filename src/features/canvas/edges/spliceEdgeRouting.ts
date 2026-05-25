@@ -948,6 +948,87 @@ function appendHorizontalPoint(
   return x;
 }
 
+/** Drop or clamp bundle trunk X so fan-out never backtracks after render inset. */
+export function reconcileBundleJogXForRender(
+  midX: number,
+  jogX: number | undefined,
+  sourceX: number,
+  diagramCenterX: number,
+): number | undefined {
+  if (jogX === undefined || !Number.isFinite(jogX)) return undefined;
+  const inward =
+    inwardSignForColumn(sourceX, diagramCenterX) > 0 ? 1 : -1;
+  if (inward > 0) {
+    if (jogX >= midX - SPLICE_PATH_EPS) return undefined;
+    return jogX;
+  }
+  if (jogX <= midX + SPLICE_PATH_EPS) return undefined;
+  return jogX;
+}
+
+function sourceHorizWaypoints(
+  sourceX: number,
+  midX: number,
+  jogX: number | undefined,
+  diagramCenterX: number,
+  sideSpans: SideCircuitLabelSpan,
+  sourceTagWidth: number,
+): number[] {
+  const sourceClearX = inwardClearXBeforeVertical(
+    sourceX,
+    midX,
+    diagramCenterX,
+    sideSpans,
+    sourceTagWidth,
+  );
+  const inward =
+    inwardSignForColumn(sourceX, diagramCenterX) > 0 ? 1 : -1;
+  const trunkX = reconcileBundleJogXForRender(
+    midX,
+    jogX,
+    sourceX,
+    diagramCenterX,
+  );
+  const raw: number[] = [sourceClearX];
+  if (
+    trunkX !== undefined &&
+    Math.abs(trunkX - midX) > SPLICE_PATH_EPS
+  ) {
+    raw.push(trunkX);
+  }
+  raw.push(midX);
+
+  const waypoints: number[] = [];
+  let lastX = sourceX;
+  for (const x of raw) {
+    if (Math.abs(x - lastX) <= SPLICE_PATH_EPS) continue;
+    if (waypoints.length === 0) {
+      waypoints.push(x);
+      lastX = x;
+      continue;
+    }
+    const delta = x - lastX;
+    if (inward > 0 && delta <= SPLICE_PATH_EPS) continue;
+    if (inward < 0 && delta >= -SPLICE_PATH_EPS) continue;
+    waypoints.push(x);
+    lastX = x;
+  }
+  return waypoints;
+}
+
+function appendSourceHorizWaypoints(
+  parts: string[],
+  waypoints: number[],
+  y: number,
+  startX: number,
+): number {
+  let lastX = startX;
+  for (const x of waypoints) {
+    lastX = appendHorizontalPoint(parts, x, y, lastX);
+  }
+  return lastX;
+}
+
 /**
  * Left leg stops at the fusion dot; right leg starts there (different strand colors).
  *
@@ -976,25 +1057,17 @@ export function buildDemarcatedSplicePaths(
   spliceY: number;
 } {
   const spliceY = (sourceY + targetY) / 2;
-  const sourceClearX = inwardClearXBeforeVertical(
+  const horizXs = sourceHorizWaypoints(
     sourceX,
     midX,
+    jogX,
     diagramCenterX,
     sideSpans,
     sourceTagWidth,
   );
-  const trunkX = jogX ?? midX;
 
   const leftParts = [`M ${sourceX},${sourceY}`];
-  let lastX = sourceX;
-  lastX = appendHorizontalPoint(leftParts, sourceClearX, sourceY, lastX);
-  if (
-    jogX !== undefined &&
-    Math.abs(trunkX - midX) > SPLICE_PATH_EPS
-  ) {
-    lastX = appendHorizontalPoint(leftParts, trunkX, sourceY, lastX);
-  }
-  lastX = appendHorizontalPoint(leftParts, midX, sourceY, lastX);
+  appendSourceHorizWaypoints(leftParts, horizXs, sourceY, sourceX);
   leftParts.push(`L ${midX},${spliceY}`);
 
   const rightParts = [
@@ -2245,22 +2318,33 @@ export function assignSpliceRoutingLanes(
   const midXMap = assignSpliceMidXLanes(candidates, sideSpans);
   const result = new Map<string, SpliceRoutingLane>();
   const candidateById = new Map(candidates.map((c) => [c.id, c]));
+
+  for (const candidate of candidates) {
+    const midX = midXMap.get(candidate.id);
+    if (midX === undefined) continue;
+    result.set(candidate.id, { midX });
+  }
+
+  assignSideVertLaneXs(candidates, result, sideSpans);
+
   const byBundle = new Map<
     string,
     Array<{ id: string; midX: number; sourceX: number }>
   >();
 
   for (const candidate of candidates) {
-    const midX = midXMap.get(candidate.id);
-    if (midX === undefined) continue;
-    const zoneKey = spliceRoutingZoneKey(candidate.sourceX, candidate.targetX);
-    const key = `${zoneKey}::${bundleKeyForCandidate(candidate)}`;
+    const lane = result.get(candidate.id);
+    if (!lane || !Number.isFinite(lane.midX)) continue;
+    const key = candidate.tubeBundleKey?.trim()
+      ? bundleKeyForCandidate(candidate)
+      : `${spliceRoutingZoneKey(candidate.sourceX, candidate.targetX)}::${candidate.id}`;
     const list = byBundle.get(key) ?? [];
-    list.push({ id: candidate.id, midX, sourceX: candidate.sourceX });
+    list.push({ id: candidate.id, midX: lane.midX, sourceX: candidate.sourceX });
     byBundle.set(key, list);
   }
 
   for (const members of byBundle.values()) {
+    if (members.length <= 1) continue;
     const fullMembers = members
       .map((member) => candidateById.get(member.id))
       .filter((member): member is MidXLaneCandidate => member !== undefined);
@@ -2268,18 +2352,23 @@ export function assignSpliceRoutingLanes(
       ? undefined
       : bundleJogXForMembers(members, diagramCenterX);
     for (const member of members) {
-      if (!Number.isFinite(member.midX)) continue;
+      const lane = result.get(member.id);
+      if (!lane) continue;
       const laneJogX =
         jogX !== undefined &&
         Number.isFinite(jogX) &&
-        Math.abs(member.midX - jogX) > SPLICE_PATH_EPS
+        Math.abs(lane.midX - jogX) > SPLICE_PATH_EPS
           ? jogX
           : undefined;
-      result.set(member.id, { midX: member.midX, jogX: laneJogX });
+      result.set(member.id, { ...lane, jogX: laneJogX });
     }
   }
 
-  assignSideVertLaneXs(candidates, result, sideSpans);
+  for (const candidate of candidates) {
+    if (result.has(candidate.id)) continue;
+    const midX = midXMap.get(candidate.id);
+    if (midX !== undefined) result.set(candidate.id, { midX });
+  }
 
   const buttByZone = new Map<string, MidXLaneCandidate[]>();
   for (const candidate of candidates) {
@@ -2896,31 +2985,22 @@ function hvDemarcatedSegments(
   _targetTagWidth = 0,
 ): OrthogonalSegment[] {
   const spliceY = (sourceY + targetY) / 2;
-  const sourceClearX = inwardClearXBeforeVertical(
+  const horizXs = sourceHorizWaypoints(
     sourceX,
     midX,
+    jogX,
     diagramCenterX,
     sideSpans,
     sourceTagWidth,
   );
-  const trunkX = jogX ?? midX;
   const segments: OrthogonalSegment[] = [];
 
   let x0 = sourceX;
-  if (Math.abs(sourceClearX - x0) > SPLICE_PATH_EPS) {
-    segments.push({ kind: "h", y: sourceY, x0, x1: sourceClearX });
-    x0 = sourceClearX;
-  }
-  if (
-    jogX !== undefined &&
-    Math.abs(trunkX - midX) > SPLICE_PATH_EPS &&
-    Math.abs(trunkX - x0) > SPLICE_PATH_EPS
-  ) {
-    segments.push({ kind: "h", y: sourceY, x0, x1: trunkX });
-    x0 = trunkX;
-  }
-  if (Math.abs(midX - x0) > SPLICE_PATH_EPS) {
-    segments.push({ kind: "h", y: sourceY, x0, x1: midX });
+  for (const x1 of horizXs) {
+    if (Math.abs(x1 - x0) > SPLICE_PATH_EPS) {
+      segments.push({ kind: "h", y: sourceY, x0, x1 });
+      x0 = x1;
+    }
   }
   segments.push({ kind: "v", x: midX, y0: sourceY, y1: spliceY });
   segments.push({ kind: "v", x: midX, y0: spliceY, y1: targetY });
@@ -3290,6 +3370,36 @@ export function routingMidXForRender(
   );
 }
 
+function renderLaneGeometry(
+  lane: SpliceRoutingLane | undefined,
+  midX: number,
+  sourceX: number,
+  diagramCenterX: number,
+  fullButtSplice: boolean,
+): {
+  midX: number;
+  jogX?: number;
+  sourceHorizY?: number;
+  targetHorizY?: number;
+  sourceBendX?: number;
+  targetBendX?: number;
+} {
+  if (fullButtSplice || !lane) return { midX };
+  return {
+    midX,
+    jogX: reconcileBundleJogXForRender(
+      midX,
+      lane.jogX,
+      sourceX,
+      diagramCenterX,
+    ),
+    sourceHorizY: lane.sourceHorizY,
+    targetHorizY: lane.targetHorizY,
+    sourceBendX: lane.sourceBendX,
+    targetBendX: lane.targetBendX,
+  };
+}
+
 export function useRoutingLaneIndex(
   edgeId: string,
   sourceNodeId: string,
@@ -3405,12 +3515,13 @@ export function useRoutingLaneIndex(
       routingLane: fallbackLane,
       activeLaneCount: Math.max(1, laneCountHint),
       maxRowOffset,
-      midX,
-      jogX: fullButtSplice ? undefined : storedLane.jogX,
-      sourceHorizY: fullButtSplice ? undefined : storedLane.sourceHorizY,
-      targetHorizY: fullButtSplice ? undefined : storedLane.targetHorizY,
-      sourceBendX: fullButtSplice ? undefined : storedLane.sourceBendX,
-      targetBendX: fullButtSplice ? undefined : storedLane.targetBendX,
+      ...renderLaneGeometry(
+        storedLane,
+        midX,
+        sourceX,
+        resolvedCenterX,
+        fullButtSplice,
+      ),
     };
   }
 
@@ -3439,12 +3550,13 @@ export function useRoutingLaneIndex(
         routingLane: fallbackLane,
         activeLaneCount: Math.max(1, laneCountHint),
         maxRowOffset,
-        midX,
-        jogX: fullButtSplice ? undefined : dragLane.jogX,
-        sourceHorizY: fullButtSplice ? undefined : dragLane.sourceHorizY,
-        targetHorizY: fullButtSplice ? undefined : dragLane.targetHorizY,
-        sourceBendX: fullButtSplice ? undefined : dragLane.sourceBendX,
-        targetBendX: fullButtSplice ? undefined : dragLane.targetBendX,
+        ...renderLaneGeometry(
+          dragLane,
+          midX,
+          sourceX,
+          resolvedCenterX,
+          fullButtSplice,
+        ),
       };
     }
   }
@@ -3559,12 +3671,13 @@ export function useRoutingLaneIndex(
     routingLane,
     activeLaneCount,
     maxRowOffset: scopedMaxRowOffset,
-    midX,
-    jogX: routing?.jogX,
-    sourceHorizY: routing?.sourceHorizY,
-    targetHorizY: routing?.targetHorizY,
-    sourceBendX: routing?.sourceBendX,
-    targetBendX: routing?.targetBendX,
+    ...renderLaneGeometry(
+      routing,
+      midX,
+      sourceX,
+      resolvedCenterX,
+      fullButtSplice,
+    ),
   };
 }
 

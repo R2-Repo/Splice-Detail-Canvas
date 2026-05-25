@@ -12,6 +12,7 @@ Frontend-only React PWA: node/workflow canvas (React Flow). No backend unless th
 | `docs/agent/HANDOFF.md` | Last session summary for the next agent |
 | `docs/agent/ARCHITECTURE.md` | Folders, patterns, extension points |
 | `docs/agent/LAYOUT_RULES.md` | **Must-keep** cable/tube/fiber layout invariants + test contract |
+| `.cursor/rules/frozen-routing.mdc` | **Frozen** splice routing symbols — user approval required |
 | `docs/agent/RULE_DICTIONARY.md` | Plain-English rule IDs for chat (`Rule ID: TUB-001`) |
 | `docs/agent/CANVAS_GLOSSARY.md` | Diagram component names + app screenshots |
 | `docs/agent/CHANGELOG.md` | Archived session history (not active requirements) |
@@ -30,6 +31,7 @@ Frontend-only React PWA: node/workflow canvas (React Flow). No backend unless th
 ## Constraints
 
 - Do not add npm packages without user approval (except this bootstrap stack).
+- Do not modify **frozen routing** (see `.cursor/rules/frozen-routing.mdc`) without explicit user approval.
 - Do not invent APIs, env vars, or backends.
 - Keep changes scoped to the task.
 - Prefer `@/` imports from `src/`.

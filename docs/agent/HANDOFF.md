@@ -4,20 +4,19 @@
 
 ## Last updated
 
-2026-05-25 — post-drag bundle order fix (3161.4 BL 1–12).
+2026-05-25 — BL/OR bundle loop-back bend fix.
 
 ## Done
 
-- **Post-drag ordering:** `recomputeRowOffsetsFromHandleYs` groups by `tubeBundleKey` (not routing zone); bundled fibers keep import `rowOffset` in `assignSpliceRoutingLanesFromLiveHandles`
-- **Live drag:** `publishDragRoutingSnapshot` on drag start/move; `useRoutingLaneIndex` reads full-graph snapshot (no partial registry)
-- **Drag stop:** `assignSpliceRoutingLanesFromLiveHandles` + fresh `diagramCenterX` when layout width expands
-- **`visualQa3161.test.ts`** — simulated cable Y drag regression for BL 1–12 monotonic midX
-- Prior: split-zone global pack, `~N` bundle key normalize, import-time BL bundle fix
+- **Loop-back spurs:** `reconcileBundleJogXForRender` drops `jogX` when clamped `midX` would backtrack; `sourceHorizWaypoints` enforces monotonic inward horizontals
+- **Global bundle trunk:** `jogX` assigned once per `tubeBundleKey` after vertical deconflict (not per routing zone)
+- **Render path:** `useRoutingLaneIndex` reconciles stored `jogX` with render-time `midX`
+- **Tests:** loop-back unit tests + 3161.4 BL 1–2 no-backtrack regression
+- Prior: post-drag bundle order, split-zone midX pack, import BL fix
 
 ## Next
 
-- User re-test: load `?fixture=3161.4`, drag a cable node — BL 1–12 should stay nested parallel
-- **Deferred:** BL/OR spur loop-back bends after drag (non-90° offshoot) — separate issue
+- User re-test 3161.4 BL/OR bends after cable drag (`?fixture=3161.4`)
 
 ## Commands verified
 

@@ -39,6 +39,8 @@ import {
   resetSpliceRouteRegistryForTests,
   routingLaneFromData,
   routingLaneFromEntries,
+  reconcileBundleJogXForRender,
+  routingMidXForRender,
   splicePathsAvoidHandleColumnVertical,
   spliceRouteSegments,
   setActiveDragCableNodeId,
@@ -998,6 +1000,75 @@ describe("spliceEdgeRouting", () => {
     // ever crosses BACK to the left of the trunk.
     for (const lane of lanes) {
       expect(lane.midX).toBeGreaterThanOrEqual(minMid - 0.01);
+    }
+  });
+
+  it("reconcileBundleJogXForRender drops trunk when clamped midX would backtrack", () => {
+    const sourceX = 100;
+    const centerX = 550;
+    expect(reconcileBundleJogXForRender(350, 400, sourceX, centerX)).toBeUndefined();
+    expect(reconcileBundleJogXForRender(450, 400, sourceX, centerX)).toBe(400);
+  });
+
+  it("buildDemarcatedSplicePaths skips reverse fan-out when jogX exceeds midX", () => {
+    const sourceX = 100;
+    const sourceY = 50;
+    const targetX = 900;
+    const targetY = 200;
+    const midX = 350;
+    const sideSpans = defaultSideCircuitLabelSpan();
+    const { leftPath } = buildDemarcatedSplicePaths(
+      sourceX,
+      sourceY,
+      targetX,
+      targetY,
+      midX,
+      400,
+      undefined,
+      sideSpans,
+      550,
+    );
+    expect(leftPath).not.toMatch(/L 400,50 L 350,50/);
+    expect(leftPath).not.toContain("L 400,50");
+  });
+
+  it("render path uses reconciled jogX after midX inset clamp", () => {
+    const sourceX = 250;
+    const targetX = 900;
+    const storedMidX = 820;
+    const storedJogX = 760;
+    const centerX = 550;
+    const sideSpans = defaultSideCircuitLabelSpan();
+    const renderMidX = routingMidXForRender(
+      storedMidX,
+      sourceX,
+      targetX,
+      centerX,
+      sideSpans,
+    );
+    const renderJogX = reconcileBundleJogXForRender(
+      renderMidX,
+      storedJogX,
+      sourceX,
+      centerX,
+    );
+    const { leftPath } = buildDemarcatedSplicePaths(
+      sourceX,
+      100,
+      targetX,
+      400,
+      renderMidX,
+      renderJogX,
+      undefined,
+      sideSpans,
+      centerX,
+    );
+    const sameYHorizs = leftPath.match(/L ([\d.]+),100/g) ?? [];
+    const xs = sameYHorizs.map((token) =>
+      Number(token.replace("L ", "").replace(",100", "")),
+    );
+    for (let i = 1; i < xs.length; i++) {
+      expect(xs[i]! - xs[i - 1]!).toBeGreaterThan(-0.01);
     }
   });
 
