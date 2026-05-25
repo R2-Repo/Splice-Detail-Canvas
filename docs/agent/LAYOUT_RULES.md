@@ -19,6 +19,8 @@ When you add or change layout behavior:
 
 Do **not** weaken or delete a rule without explicit user approval.
 
+When EDGE rules conflict, see [`RULE_PRIORITY.md`](./RULE_PRIORITY.md) — EDGE-004 (≤2 bends) wins over EDGE-011 Y-track offsets.
+
 ---
 
 ## Rule catalog

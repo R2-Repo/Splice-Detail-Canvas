@@ -4,17 +4,17 @@
 
 ## Baseline
 
-- Branch/tag: `layout-baseline-v1` (created repo-reset session)
-- Verified: `npm run verify` + Examples #1–#3 CSV import
+- Branch: `main` @ tag `layout-baseline-v1`
+- Verified: `npm run verify` — all 31 layout rules on Examples #1–#3 + production CSVs
 
 ## Current phase
 
-**Layout stabilization** — no new features until baseline holds across sessions.
+**Layout stabilization** — baseline merged to `main`; contract tests green.
 
 ## In scope NOW
 
 - Bug fixes: one example, one rule ID, max 2 source files per session
-- Doc/code hygiene (repo reset complete)
+- User visual QA on Examples #1–#3 (screenshot vs reference PNGs)
 
 ## Out of scope until stabilization complete
 
@@ -24,7 +24,7 @@
 
 ## Rule priority (conflicts)
 
-See [`RULE_PRIORITY.md`](./RULE_PRIORITY.md).
+See [`RULE_PRIORITY.md`](./RULE_PRIORITY.md). EDGE-004 wins over EDGE-011.
 
 ## Active decisions
 
@@ -44,7 +44,7 @@ See [`RULE_PRIORITY.md`](./RULE_PRIORITY.md).
 
 ## Known issues (ordered)
 
-1. EDGE-011 deconflict vs EDGE-004 two-bend limit — EDGE-004 wins (see `RULE_PRIORITY.md`)
+1. EDGE-011 horizontal Y-track deconflict disabled under EDGE-004 — overlap checker passes; user visual QA may still find stacked horizontals
 2. PNG visual parity incomplete
 3. PDF export blocked on dep approval
 
