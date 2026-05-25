@@ -61,20 +61,8 @@ export function activeSpliceLaneCount(
   return orderedFiberConnections(graph).filter((c) => !hidden.has(c.id)).length;
 }
 
-/**
- * Minimum canvas width so cable columns leave enough center gap for splice lanes.
- * Uses global row-offset span so horizontal lane spacing matches vertical tube groups.
- *
- * Width is always sized for the **expanded** graph (collapse=false). Toggling
- * full-butt collapse therefore never changes the diagram width — collapsing
- * fewer connections shouldn't shrink the routing space and force the layout
- * to reflow in a way the user has to fix.
- */
-export function importLayoutWidthForGraph(
-  graph: ConnectionGraph,
-  options?: ImportLayoutWidthOptions,
-): number {
-  // Intentionally ignore options.collapse for width sizing — see fn doc above.
+/** Minimum diagram width from cable columns + center routing (ignores viewport). */
+export function minLayoutWidthForGraph(graph: ConnectionGraph): number {
   const laneCount = activeSpliceLaneCount(graph, false);
   const { visualCables, dominant } = buildVisualCablesForLayout(graph);
   const rowOffsets = connectionRowOffsets(graph, visualCables, dominant);
@@ -86,12 +74,53 @@ export function importLayoutWidthForGraph(
     visualCables.map((vc) => vc.tubes.length),
   );
   const margin = CABLE_LAYOUT.leftX;
-
   const minCenterGap = minCenterGapForRowSpan(maxRowOffset, laneCount);
-  const columnSpan = 2 * margin + 2 * nodeWidth + minCenterGap;
+  return 2 * margin + 2 * nodeWidth + minCenterGap;
+}
+
+/**
+ * Minimum canvas width so cable columns leave enough center gap for splice lanes.
+ * Uses global row-offset span so horizontal lane spacing matches vertical tube groups.
+ *
+ * Width is always sized for the **expanded** graph (collapse=false). Toggling
+ * full-butt collapse therefore never changes the diagram width — collapsing
+ * fewer connections shouldn't shrink the routing space and force the layout
+ * to reflow in a way the user has to fix.
+ *
+ * When `stageWidth` is provided, layout fills the viewport (never below content
+ * minimum). Without a stage, falls back to `CABLE_LAYOUT.width` for tests/offline.
+ */
+export function importLayoutWidthForGraph(
+  graph: ConnectionGraph,
+  options?: ImportLayoutWidthOptions,
+): number {
+  // Intentionally ignore options.collapse for width sizing — see fn doc above.
+  const columnSpan = minLayoutWidthForGraph(graph);
   const stageWidth = options?.stageWidth ?? 0;
 
-  return Math.max(CABLE_LAYOUT.width, stageWidth, columnSpan);
+  if (stageWidth > 0) {
+    return Math.max(stageWidth, columnSpan);
+  }
+  return Math.max(CABLE_LAYOUT.width, columnSpan);
+}
+
+/**
+ * Viewport-driven width for live reflow. Preserves user outward drag expansion
+ * when the current layout is wider than the viewport would require.
+ */
+export function layoutWidthForViewport(
+  graph: ConnectionGraph,
+  stageWidth: number,
+  currentLayoutWidth?: number,
+): number {
+  const viewportWidth = importLayoutWidthForGraph(graph, { stageWidth });
+  if (
+    currentLayoutWidth !== undefined &&
+    currentLayoutWidth > viewportWidth + 1
+  ) {
+    return currentLayoutWidth;
+  }
+  return viewportWidth;
 }
 
 export function reportStorageKey(graph: ConnectionGraph): string {

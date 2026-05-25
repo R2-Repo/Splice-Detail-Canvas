@@ -39,6 +39,9 @@ import {
 import type { CableXBounds } from "@/features/diagram/cableLayoutMetrics";
 import { tubeHandleId } from "@/features/diagram/tubeId";
 import {
+  buildSpliceHandleEntries,
+  assignSpliceRoutingLanesFromHandleEntries,
+  routingLaneDataFromLane,
   spliceTubeBundleKey,
 } from "@/features/canvas/edges/spliceEdgeRouting";
 import {
@@ -278,6 +281,7 @@ export function buildReactFlowGraph(
         laneCount,
         rowOffset: rowOffsets.get(conn.id) ?? 0,
         sideCircuitSpan,
+        diagramCenterX: centerX,
         tubeBundleKey: spliceTubeBundleKey(
           source.visualCableId,
           source.endpoint.tubeColor,
@@ -323,6 +327,7 @@ export function buildReactFlowGraph(
         laneCount,
         rowOffset,
         sideCircuitSpan,
+        diagramCenterX: centerX,
       },
     });
   }
@@ -333,5 +338,22 @@ export function buildReactFlowGraph(
     effectiveWidth,
   );
 
-  return { nodes, edges, layout, xBounds };
+  const importHandleEntries = buildSpliceHandleEntries(nodes, edges, visualCables);
+  const importRouting = assignSpliceRoutingLanesFromHandleEntries(
+    importHandleEntries,
+    centerX,
+  );
+  const routedEdges = edges.map((edge) => {
+    const lane = importRouting.get(edge.id);
+    if (!lane) return edge;
+    return {
+      ...edge,
+      data: {
+        ...(edge.data as Record<string, unknown>),
+        ...routingLaneDataFromLane(lane),
+      },
+    };
+  });
+
+  return { nodes, edges: routedEdges, layout, xBounds };
 }

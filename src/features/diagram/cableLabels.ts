@@ -1,6 +1,7 @@
 /** Bentley-style cable header from name (e.g. "006 SMFO (R2)"). */
 import {
   FIBER_CIRCUIT_MAX_WIDTH,
+  SPLICE_HANDLE_OVERHANG,
   fiberRowPrefixWidth,
 } from "@/features/diagram/cableLayoutMetrics";
 import type { VisualCable } from "@/features/diagram/visualCables";
@@ -68,6 +69,16 @@ export function formattedCircuitTagWidth(circuitName?: string): number {
   const width = estimateCircuitTagWidth(tag);
   circuitTagWidthCache.set(tag, width);
   return width;
+}
+
+/** Stem → React Flow handle center (label row + handle overhang). */
+export function fiberRowLabelWidth(circuitName?: string): number {
+  return fiberRowPrefixWidth() + formattedCircuitTagWidth(circuitName);
+}
+
+/** Outset from stem X to splice handle center on one cable side. */
+export function spliceHandleOutsetFromStem(circuitName?: string): number {
+  return fiberRowLabelWidth(circuitName) + SPLICE_HANDLE_OVERHANG;
 }
 
 /** @internal test helper */

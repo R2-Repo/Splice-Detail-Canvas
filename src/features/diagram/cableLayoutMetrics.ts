@@ -24,6 +24,9 @@ export const SPLICE_LANE_SEP = MIN_FIBER_LINE_GAP;
 /** Margin inside cable handles before splice lanes are placed (see spliceEdgeRouting). */
 export const SPLICE_ROUTING_END_MARGIN = 16;
 
+/** React Flow handle overhang past the fiber label row (.cable-node__handle ±4px). */
+export const SPLICE_HANDLE_OVERHANG = 4;
+
 /** Minimum horizontal run toward diagram center before same-side splices turn vertical. */
 export const MIN_HORIZONTAL_INSET_FLOOR = 16;
 

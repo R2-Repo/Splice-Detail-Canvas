@@ -12,6 +12,7 @@ import {
   cableXForSide,
   FIBER_ROW_PITCH,
   fiberRowOffsetInCable,
+  MIN_SPLICE_HORIZONTAL_INSET,
   SPLICE_LANE_SEP,
   TUBE_GROUP_GAP,
 } from "@/features/diagram/cableLayoutMetrics";
@@ -28,7 +29,7 @@ import {
   computeCableXBounds,
   type AlignedDiagramLayout,
 } from "@/features/diagram/spliceRowLayout";
-import { computeSideCircuitLabelSpans } from "@/features/diagram/cableLabels";
+import { computeSideCircuitLabelSpans, formattedCircuitTagWidth } from "@/features/diagram/cableLabels";
 import { importLayoutWidthForGraph } from "@/features/diagram/layoutSpliceDiagram";
 import {
   cableFiberTopToBottomOk,
@@ -56,6 +57,7 @@ import {
   pickSpliceRouteTemplate,
   resolveSpliceMidX,
   spliceMidOrderInverts,
+  splicePathsAvoidHandleColumnVertical,
   spliceRouteSegments,
   type SpliceRoutingLane,
   SPLICE_PATH_EPS,
@@ -497,6 +499,8 @@ function spliceHandleEndpoints(
   targetX: number;
   targetY: number;
   rowOffset: number;
+  sourceTagWidth: number;
+  targetTagWidth: number;
 } | null {
   const csvLeft = endpointOnVisualSide(
     conn,
@@ -546,16 +550,26 @@ function spliceHandleEndpoints(
 
   let sourceHandle = leftHandle;
   let targetHandle = rightHandle;
+  let sourceVc = leftVc;
+  let targetVc = rightVc;
   if (
     csvLeft.canvasSide === "right" &&
     csvRight.canvasSide === "left"
   ) {
     sourceHandle = rightHandle;
     targetHandle = leftHandle;
+    sourceVc = rightVc;
+    targetVc = leftVc;
   }
 
   const edge = ctx.reactFlow.edges.find((e) => e.id === `splice-${conn.id}`);
   const rowOffset = (edge?.data as { rowOffset?: number })?.rowOffset ?? 0;
+  const sourceFiber = sourceVc.tubes
+    .flatMap((tube) => tube.fibers)
+    .find((fiber) => fiber.connectionId === conn.id);
+  const targetFiber = targetVc.tubes
+    .flatMap((tube) => tube.fibers)
+    .find((fiber) => fiber.connectionId === conn.id);
 
   return {
     sourceX: sourceHandle.x,
@@ -563,6 +577,8 @@ function spliceHandleEndpoints(
     targetX: targetHandle.x,
     targetY: targetHandle.y,
     rowOffset,
+    sourceTagWidth: formattedCircuitTagWidth(sourceFiber?.circuitName),
+    targetTagWidth: formattedCircuitTagWidth(targetFiber?.circuitName),
   };
 }
 
@@ -693,6 +709,7 @@ function resolveCtxSpliceMidX(
 
 function splicePathsWithinBendLimit(ctx: LayoutRuleContext): boolean {
   const packed = buildPackedRoutingMap(ctx);
+  const sideSpans = sideCircuitSpanFromCtx(ctx);
 
   for (const conn of orderedFiberConnections(ctx.graph)) {
     if (conn.kind !== "fiber") continue;
@@ -710,6 +727,10 @@ function splicePathsWithinBendLimit(ctx: LayoutRuleContext): boolean {
       midX,
       jogX,
       { sourceHorizY, targetHorizY },
+      sideSpans,
+      ctx.layoutWidth / 2,
+      endpoints.sourceTagWidth ?? 0,
+      endpoints.targetTagWidth ?? 0,
     );
     const maxBends = maxSpliceBendsForLane(sourceY, targetY, lane);
     if (bendCount > maxBends) return false;
@@ -719,10 +740,14 @@ function splicePathsWithinBendLimit(ctx: LayoutRuleContext): boolean {
 
 function centerLanesPreserveTubeGrouping(ctx: LayoutRuleContext): boolean {
   const packed = buildPackedMidXMap(ctx);
-  const byZone = new Map<
-    string,
-    { rowOffset: number; midX: number; inverts: boolean }[]
-  >();
+  type LaneEntry = {
+    rowOffset: number;
+    midX: number;
+    inverts: boolean;
+    tubeBundleKey?: string;
+    zoneKey: string;
+  };
+  const lanes: LaneEntry[] = [];
 
   for (const conn of orderedFiberConnections(ctx.graph)) {
     if (conn.kind !== "fiber") continue;
@@ -738,21 +763,54 @@ function centerLanesPreserveTubeGrouping(ctx: LayoutRuleContext): boolean {
       continue;
     }
 
-    const key = spliceRoutingZoneKey(sourceX, targetX);
-    const list = byZone.get(key) ?? [];
-    list.push({
+    const edge = ctx.reactFlow.edges.find((e) => e.id === `splice-${conn.id}`);
+    const tubeBundleKey = (edge?.data as { tubeBundleKey?: string })
+      ?.tubeBundleKey;
+
+    lanes.push({
       rowOffset,
       midX: resolveCtxSpliceMidX(ctx, conn.id, endpoints, packed),
       inverts: spliceMidOrderInverts(sourceX, sourceY, targetX, targetY),
+      tubeBundleKey,
+      zoneKey: spliceRoutingZoneKey(sourceX, targetX),
     });
-    byZone.set(key, list);
   }
 
-  for (const lanes of byZone.values()) {
-    lanes.sort((a, b) => a.rowOffset - b.rowOffset);
-    for (let i = 1; i < lanes.length; i++) {
-      const prev = lanes[i - 1]!;
-      const curr = lanes[i]!;
+  const byBundle = new Map<string, LaneEntry[]>();
+  const unbundled: LaneEntry[] = [];
+  for (const lane of lanes) {
+    if (lane.tubeBundleKey) {
+      const key = `${lane.zoneKey}::${lane.tubeBundleKey}`;
+      const list = byBundle.get(key) ?? [];
+      list.push(lane);
+      byBundle.set(key, list);
+    } else {
+      unbundled.push(lane);
+    }
+  }
+
+  for (const bundle of byBundle.values()) {
+    if (bundle.length <= 1) continue;
+    bundle.sort((a, b) => a.rowOffset - b.rowOffset);
+    for (let i = 1; i < bundle.length; i++) {
+      if (bundle[i]!.midX < bundle[i - 1]!.midX - Y_TOLERANCE) {
+        return false;
+      }
+    }
+  }
+
+  const byZone = new Map<string, LaneEntry[]>();
+  for (const lane of unbundled) {
+    const list = byZone.get(lane.zoneKey) ?? [];
+    list.push(lane);
+    byZone.set(lane.zoneKey, list);
+  }
+
+  for (const group of byZone.values()) {
+    group.sort((a, b) => a.rowOffset - b.rowOffset);
+    for (let i = 1; i < group.length; i++) {
+      const prev = group[i - 1]!;
+      const curr = group[i]!;
       if (prev.inverts !== curr.inverts) continue;
       if (prev.inverts) {
         if (curr.midX > prev.midX + Y_TOLERANCE) return false;
@@ -1071,7 +1129,7 @@ function spliceCenterPathsDoNotCross(ctx: LayoutRuleContext): boolean {
 }
 
 function sameSideSplicesDetourTowardCenter(ctx: LayoutRuleContext): boolean {
-  const packed = buildPackedMidXMap(ctx);
+  const packed = buildPackedRoutingMap(ctx);
   const centerX = ctx.layoutWidth / 2;
   const sideSpans = sideCircuitSpanFromCtx(ctx);
 
@@ -1080,7 +1138,8 @@ function sameSideSplicesDetourTowardCenter(ctx: LayoutRuleContext): boolean {
     const endpoints = spliceHandleEndpoints(ctx, conn);
     if (!endpoints) continue;
 
-    const { sourceX, sourceY, targetX, targetY } = endpoints;
+    const { sourceX, sourceY, targetX, targetY, sourceTagWidth, targetTagWidth } =
+      endpoints;
     const template = pickSpliceRouteTemplate(
       sourceX,
       sourceY,
@@ -1089,10 +1148,45 @@ function sameSideSplicesDetourTowardCenter(ctx: LayoutRuleContext): boolean {
     );
     if (template === "straight") continue;
 
-    const midX = resolveCtxSpliceMidX(ctx, conn.id, endpoints, packed);
+    const lane = resolveCtxSpliceRouting(ctx, conn.id, endpoints, packed);
+    const { midX, jogX, sourceHorizY, targetHorizY } = lane;
     if (
-      !horizontalInsetOkFromHandle(midX, sourceX, centerX, sideSpans) ||
-      !horizontalInsetOkFromHandle(midX, targetX, centerX, sideSpans)
+      !horizontalInsetOkFromHandle(
+        midX,
+        sourceX,
+        centerX,
+        sideSpans,
+        MIN_SPLICE_HORIZONTAL_INSET,
+        sourceTagWidth ?? 0,
+        true,
+      ) ||
+      !horizontalInsetOkFromHandle(
+        midX,
+        targetX,
+        centerX,
+        sideSpans,
+        MIN_SPLICE_HORIZONTAL_INSET,
+        targetTagWidth ?? 0,
+        true,
+      )
+    ) {
+      return false;
+    }
+
+    if (
+      !splicePathsAvoidHandleColumnVertical(
+        sourceX,
+        sourceY,
+        targetX,
+        targetY,
+        midX,
+        jogX,
+        { sourceHorizY, targetHorizY },
+        sideSpans,
+        centerX,
+        sourceTagWidth ?? 0,
+        targetTagWidth ?? 0,
+      )
     ) {
       return false;
     }

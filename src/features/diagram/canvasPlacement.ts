@@ -13,6 +13,9 @@ export type CablePlacement = {
   order: number;
 };
 
+const MAX_BARYCENTER_PASSES = 8;
+const MAX_PERMUTE_CABLES = 8;
+
 function fiberCountForVisualCable(vc: VisualCable): number {
   return vc.tubes.reduce((n, t) => n + t.fibers.length, 0);
 }
@@ -44,6 +47,26 @@ function cableSortTieBreak(
   return fiberCountForVisualCable(b) - fiberCountForVisualCable(a);
 }
 
+function medianRowIndex(
+  rowIndex: Map<string, number>,
+  connectionIds: string[],
+): number {
+  const values = connectionIds
+    .map((id) => rowIndex.get(id))
+    .filter((row): row is number => row !== undefined)
+    .sort((a, b) => a - b);
+  if (values.length === 0) return Number.MAX_SAFE_INTEGER;
+  return values[Math.floor(values.length / 2)]!;
+}
+
+
+function ownRowBarycenter(vc: VisualCable, rowIndex: Map<string, number>): number {
+  return medianRowIndex(
+    rowIndex,
+    vc.tubes.flatMap((t) => t.fibers.map((f) => f.connectionId)),
+  );
+}
+
 function partnerBarycenter(
   vc: VisualCable,
   graph: ConnectionGraph,
@@ -66,11 +89,13 @@ function partnerBarycenter(
     const partnerKey = leftKey === myKey ? rightKey : rightKey === myKey ? leftKey : null;
     if (!partnerKey) continue;
 
-    const partnerVc = visualCables.find(
+    const partnerVcs = visualCables.filter(
       (v) => cableNameKey(v.cable) === partnerKey && v.side !== vc.side,
     );
-    if (partnerVc) {
-      rows.push(minRowIndexForVisualCable(partnerVc, rowIndex));
+    if (partnerVcs.length > 0) {
+      for (const partnerVc of partnerVcs) {
+        rows.push(minRowIndexForVisualCable(partnerVc, rowIndex));
+      }
     } else {
       rows.push(rowIndex.get(conn.id) ?? 0);
     }
@@ -85,22 +110,206 @@ function sortSideByBarycenter(
   graph: ConnectionGraph,
   rowIndex: Map<string, number>,
   visualCables: VisualCable[],
+  side: "left" | "right",
   dominant?: DominantCablePair | null,
 ): VisualCable[] {
-  const ranks = new Map<string, number>();
+  const ownRanks = new Map<string, number>();
+  const partnerRanks = new Map<string, number>();
   for (const vc of cables) {
-    ranks.set(vc.id, partnerBarycenter(vc, graph, rowIndex, visualCables));
+    ownRanks.set(vc.id, ownRowBarycenter(vc, rowIndex));
+    partnerRanks.set(vc.id, partnerBarycenter(vc, graph, rowIndex, visualCables));
   }
 
   return [...cables].sort(
     (a, b) =>
-      dominantGroupRank(a, a.side, dominant) -
-        dominantGroupRank(b, b.side, dominant) ||
-      (ranks.get(a.id) ?? 0) - (ranks.get(b.id) ?? 0) ||
+      dominantGroupRank(a, side, dominant) -
+        dominantGroupRank(b, side, dominant) ||
+      (ownRanks.get(a.id) ?? 0) - (ownRanks.get(b.id) ?? 0) ||
+      (partnerRanks.get(a.id) ?? 0) - (partnerRanks.get(b.id) ?? 0) ||
       cableSortTieBreak(a, b, graph) ||
       a.cable.localeCompare(b.cable) ||
       a.order - b.order,
   );
+}
+
+function ordersEqual(a: VisualCable[], b: VisualCable[]): boolean {
+  return a.length === b.length && a.every((vc, i) => vc.id === b[i]?.id);
+}
+
+function convergeSideOrder(
+  cables: VisualCable[],
+  graph: ConnectionGraph,
+  rowIndex: Map<string, number>,
+  visualCables: VisualCable[],
+  side: "left" | "right",
+  dominant?: DominantCablePair | null,
+): VisualCable[] {
+  let order = sortSideByBarycenter(
+    cables,
+    graph,
+    rowIndex,
+    visualCables,
+    side,
+    dominant,
+  );
+  for (let pass = 0; pass < MAX_BARYCENTER_PASSES; pass++) {
+    const next = sortSideByBarycenter(
+      order,
+      graph,
+      rowIndex,
+      visualCables,
+      side,
+      dominant,
+    );
+    if (ordersEqual(order, next)) break;
+    order = next;
+  }
+  return order;
+}
+
+function countInversions(values: number[]): number {
+  let inversions = 0;
+  for (let i = 0; i < values.length; i++) {
+    for (let j = i + 1; j < values.length; j++) {
+      if (values[i]! > values[j]!) inversions += 1;
+    }
+  }
+  return inversions;
+}
+
+type StackCrossing = {
+  leftRank: number;
+  rightRank: number;
+  rowIndex: number;
+};
+
+function stackCrossingsForOrders(
+  leftOrder: VisualCable[],
+  rightOrder: VisualCable[],
+  graph: ConnectionGraph,
+  rowIndex: Map<string, number>,
+  visualCables: VisualCable[],
+): number {
+  const leftRank = new Map(leftOrder.map((vc, i) => [vc.id, i]));
+  const rightRank = new Map(rightOrder.map((vc, i) => [vc.id, i]));
+  const crossings: StackCrossing[] = [];
+
+  for (const conn of graph.connections) {
+    if (conn.kind !== "fiber") continue;
+    const leftVc = visualCables.find(
+      (v) =>
+        v.side === "left" &&
+        v.tubes.some((t) => t.fibers.some((f) => f.connectionId === conn.id)),
+    );
+    const rightVc = visualCables.find(
+      (v) =>
+        v.side === "right" &&
+        v.tubes.some((t) => t.fibers.some((f) => f.connectionId === conn.id)),
+    );
+    if (!leftVc || !rightVc) continue;
+    crossings.push({
+      leftRank: leftRank.get(leftVc.id) ?? 0,
+      rightRank: rightRank.get(rightVc.id) ?? 0,
+      rowIndex: rowIndex.get(conn.id) ?? 0,
+    });
+  }
+
+  crossings.sort(
+    (a, b) => a.leftRank - b.leftRank || a.rowIndex - b.rowIndex,
+  );
+  return countInversions(crossings.map((c) => c.rightRank));
+}
+
+function permutations<T>(items: T[]): T[][] {
+  if (items.length <= 1) return [items];
+  const result: T[][] = [];
+  for (let i = 0; i < items.length; i++) {
+    const head = items[i]!;
+    const tail = items.slice(0, i).concat(items.slice(i + 1));
+    for (const perm of permutations(tail)) {
+      result.push([head, ...perm]);
+    }
+  }
+  return result;
+}
+
+function splitDominantFirst(
+  cables: VisualCable[],
+  side: "left" | "right",
+  dominant?: DominantCablePair | null,
+): { primary: VisualCable[]; secondary: VisualCable[] } {
+  const primary: VisualCable[] = [];
+  const secondary: VisualCable[] = [];
+  for (const vc of cables) {
+    if (dominantGroupRank(vc, side, dominant) === 0) {
+      primary.push(vc);
+    } else {
+      secondary.push(vc);
+    }
+  }
+  return { primary, secondary };
+}
+
+function optimizeJointStackOrder(
+  leftCables: VisualCable[],
+  rightCables: VisualCable[],
+  graph: ConnectionGraph,
+  rowIndex: Map<string, number>,
+  visualCables: VisualCable[],
+  dominant?: DominantCablePair | null,
+): { left: VisualCable[]; right: VisualCable[] } {
+  const leftSplit = splitDominantFirst(leftCables, "left", dominant);
+  const rightSplit = splitDominantFirst(rightCables, "right", dominant);
+
+  const leftSecondary = leftSplit.secondary;
+  const rightSecondary = rightSplit.secondary;
+  const canPermuteLeft = leftSecondary.length <= MAX_PERMUTE_CABLES;
+  const canPermuteRight = rightSecondary.length <= MAX_PERMUTE_CABLES;
+
+  if (!canPermuteLeft && !canPermuteRight) {
+    return {
+      left: [...leftSplit.primary, ...leftSecondary],
+      right: [...rightSplit.primary, ...rightSecondary],
+    };
+  }
+
+  const leftCandidates = canPermuteLeft
+    ? permutations(leftSecondary)
+    : [leftSecondary];
+  const rightCandidates = canPermuteRight
+    ? permutations(rightSecondary)
+    : [rightSecondary];
+
+  let bestLeft = [...leftSplit.primary, ...leftSecondary];
+  let bestRight = [...rightSplit.primary, ...rightSecondary];
+  let bestScore = stackCrossingsForOrders(
+    bestLeft,
+    bestRight,
+    graph,
+    rowIndex,
+    visualCables,
+  );
+
+  for (const leftPerm of leftCandidates) {
+    for (const rightPerm of rightCandidates) {
+      const candidateLeft = [...leftSplit.primary, ...leftPerm];
+      const candidateRight = [...rightSplit.primary, ...rightPerm];
+      const score = stackCrossingsForOrders(
+        candidateLeft,
+        candidateRight,
+        graph,
+        rowIndex,
+        visualCables,
+      );
+      if (score < bestScore) {
+        bestScore = score;
+        bestLeft = candidateLeft;
+        bestRight = candidateRight;
+      }
+    }
+  }
+
+  return { left: bestLeft, right: bestRight };
 }
 
 export function computeCanvasPlacement(
@@ -141,22 +350,52 @@ export function computeCanvasPlacement(
   let leftOrder = visualCables.filter((vc) => vc.side === "left");
   let rightOrder = visualCables.filter((vc) => vc.side === "right");
 
+  leftOrder = convergeSideOrder(
+    leftOrder,
+    graph,
+    rowIndex,
+    visualCables,
+    "left",
+    dominant,
+  );
+  rightOrder = convergeSideOrder(
+    rightOrder,
+    graph,
+    rowIndex,
+    visualCables,
+    "right",
+    dominant,
+  );
+
   for (let pass = 0; pass < 2; pass++) {
-    leftOrder = sortSideByBarycenter(
+    leftOrder = convergeSideOrder(
       leftOrder,
       graph,
       rowIndex,
       visualCables,
+      "left",
       dominant,
     );
-    rightOrder = sortSideByBarycenter(
+    rightOrder = convergeSideOrder(
       rightOrder,
       graph,
       rowIndex,
       visualCables,
+      "right",
       dominant,
     );
   }
+
+  const optimized = optimizeJointStackOrder(
+    leftOrder,
+    rightOrder,
+    graph,
+    rowIndex,
+    visualCables,
+    dominant,
+  );
+  leftOrder = optimized.left;
+  rightOrder = optimized.right;
 
   leftOrder.forEach((vc, order) => {
     placement.set(vc.id, { side: "left", order });
@@ -180,4 +419,21 @@ function dominantGroupRank(
       ? group === dominant.leftGroupKey
       : group === dominant.rightGroupKey;
   return isPrimary ? 0 : 1;
+}
+
+/** Exported for tests — count strand crossings implied by stack order. */
+export function stackOrderCrossingCount(
+  leftOrder: VisualCable[],
+  rightOrder: VisualCable[],
+  graph: ConnectionGraph,
+  rowIndex: Map<string, number>,
+  visualCables: VisualCable[],
+): number {
+  return stackCrossingsForOrders(
+    leftOrder,
+    rightOrder,
+    graph,
+    rowIndex,
+    visualCables,
+  );
 }

@@ -5,17 +5,25 @@ import {
   SPLICE_ROUTING_END_MARGIN,
   MIN_SPLICE_HORIZONTAL_INSET,
   MIN_HORIZONTAL_INSET_FLOOR,
+  FIBER_CIRCUIT_MAX_WIDTH,
+  SPLICE_HANDLE_OVERHANG,
   fiberRowPrefixWidth,
   CABLE_LAYOUT,
   FIBER_ROW_PITCH,
   fiberRowOffsetInCable,
 } from "@/features/diagram/cableLayoutMetrics";
-import type { SideCircuitLabelSpan } from "@/features/diagram/cableLabels";
+import {
+  formattedCircuitTagWidth,
+  spliceHandleOutsetFromStem,
+  type SideCircuitLabelSpan,
+} from "@/features/diagram/cableLabels";
 import { computeCableBreakout } from "@/features/diagram/cableBreakoutGeometry";
 import type { VisualCable } from "@/features/diagram/visualCables";
 
 export type SpliceEdgeRouteEntry = {
   id: string;
+  sourceNodeId: string;
+  targetNodeId: string;
   sourceX: number;
   sourceY: number;
   targetX: number;
@@ -26,6 +34,174 @@ export type SpliceEdgeRouteEntry = {
   /** Same source tube + target cable — fibers share one center lane. */
   tubeBundleKey?: string;
 };
+
+/** Frozen routing persisted on edge data after import or cable drag. */
+export type SpliceRoutingLaneData = {
+  routingMidX: number;
+  routingJogX?: number;
+  routingSourceHorizY?: number;
+  routingTargetHorizY?: number;
+  /** Canvas center X used for inward-sign / EDGE-009 clearance. */
+  diagramCenterX?: number;
+};
+
+export type SpliceHandleEntry = {
+  id: string;
+  sourceNodeId: string;
+  targetNodeId: string;
+  sourceX: number;
+  sourceY: number;
+  targetX: number;
+  targetY: number;
+  fallbackLane: number;
+  rowOffset?: number;
+  tubeBundleKey?: string;
+  sideCircuitSpan?: SideCircuitLabelSpan;
+  sourceTagWidth?: number;
+  targetTagWidth?: number;
+};
+
+export function buildSpliceHandleEntries(
+  nodes: Array<{
+    id: string;
+    position: { x: number; y: number };
+    data: unknown;
+  }>,
+  edges: Array<{
+    id: string;
+    source?: string | null;
+    target?: string | null;
+    type?: string | null;
+    data?: unknown;
+  }>,
+  visualCables: VisualCable[],
+  options?: { cableNodeId?: string },
+): SpliceHandleEntry[] {
+  const vcByNodeId = new Map<string, VisualCable>(
+    visualCables.map((vc) => [`cable-${vc.id}`, vc]),
+  );
+  const entries: SpliceHandleEntry[] = [];
+
+  for (const edge of edges) {
+    if (edge.type !== "splice") continue;
+    if (
+      options?.cableNodeId &&
+      edge.source !== options.cableNodeId &&
+      edge.target !== options.cableNodeId
+    ) {
+      continue;
+    }
+
+    const sourceNode = nodes.find((n) => n.id === edge.source);
+    const targetNode = nodes.find((n) => n.id === edge.target);
+    const sourceVc = edge.source ? vcByNodeId.get(edge.source) : undefined;
+    const targetVc = edge.target ? vcByNodeId.get(edge.target) : undefined;
+    if (!sourceNode || !targetNode || !sourceVc || !targetVc) continue;
+
+    const edgeData = (edge.data ?? {}) as {
+      rowOffset?: number;
+      tubeBundleKey?: string;
+      laneIndex?: number;
+      sideCircuitSpan?: SideCircuitLabelSpan;
+      circuitName?: string;
+    };
+    const connectionId = edge.id.replace(/^splice-/, "").replace(/^butt-/, "");
+    const sourceFiber = sourceVc.tubes
+      .flatMap((t) => t.fibers)
+      .find((f) => f.connectionId === connectionId);
+    const targetFiber = targetVc.tubes
+      .flatMap((t) => t.fibers)
+      .find((f) => f.connectionId === connectionId);
+    const sourceScale = (sourceNode.data as { diagramScale?: number }).diagramScale ?? 1;
+    const targetScale = (targetNode.data as { diagramScale?: number }).diagramScale ?? 1;
+    const sourceAligned = (sourceNode.data as { alignedStemX?: number }).alignedStemX;
+    const targetAligned = (targetNode.data as { alignedStemX?: number }).alignedStemX;
+    const sourcePos = fiberHandlePosition(
+      sourceVc,
+      connectionId,
+      sourceNode.position,
+      sourceScale,
+      sourceAligned,
+      sourceFiber?.circuitName ?? edgeData.circuitName,
+    );
+    const targetPos = fiberHandlePosition(
+      targetVc,
+      connectionId,
+      targetNode.position,
+      targetScale,
+      targetAligned,
+      targetFiber?.circuitName ?? edgeData.circuitName,
+    );
+
+    entries.push({
+      id: edge.id,
+      sourceNodeId: sourceNode.id,
+      targetNodeId: targetNode.id,
+      sourceX: sourcePos.x,
+      sourceY: sourcePos.y,
+      targetX: targetPos.x,
+      targetY: targetPos.y,
+      fallbackLane: edgeData.laneIndex ?? 0,
+      rowOffset: edgeData.rowOffset,
+      tubeBundleKey: edgeData.tubeBundleKey,
+      sideCircuitSpan: edgeData.sideCircuitSpan,
+      sourceTagWidth: formattedCircuitTagWidth(
+        sourceFiber?.circuitName ?? edgeData.circuitName,
+      ),
+      targetTagWidth: formattedCircuitTagWidth(
+        targetFiber?.circuitName ?? edgeData.circuitName,
+      ),
+    });
+  }
+
+  return entries;
+}
+
+export function assignSpliceRoutingLanesFromHandleEntries(
+  entries: SpliceHandleEntry[],
+  diagramCenterX?: number,
+): Map<string, SpliceRoutingLane> {
+  if (entries.length === 0) return new Map();
+
+  const sideSpans =
+    entries.find((entry) => entry.sideCircuitSpan)?.sideCircuitSpan ??
+    defaultSideCircuitLabelSpan();
+  const candidates: MidXLaneCandidate[] = entries.map((entry) => ({
+    id: entry.id,
+    sourceX: entry.sourceX,
+    sourceY: entry.sourceY,
+    targetX: entry.targetX,
+    targetY: entry.targetY,
+    rowOffset: entry.rowOffset ?? entry.fallbackLane,
+    tubeBundleKey: entry.tubeBundleKey,
+  }));
+
+  const centerX =
+    diagramCenterX ?? globalDiagramCenterX(candidates);
+  const result = assignSpliceRoutingLanes(candidates, sideSpans);
+
+  for (const entry of entries) {
+    const lane = result.get(entry.id);
+    if (!lane) continue;
+    const midX = enforceMinHorizontalInset(
+      lane.midX,
+      entry.sourceX,
+      entry.targetX,
+      centerX,
+      sideSpans,
+      MIN_SPLICE_HORIZONTAL_INSET,
+      entry.sourceTagWidth ?? 0,
+      entry.targetTagWidth ?? 0,
+      true,
+      true,
+    );
+    if (Math.abs(midX - lane.midX) > SPLICE_PATH_EPS) {
+      result.set(entry.id, { ...lane, midX });
+    }
+  }
+
+  return result;
+}
 
 /** Rank 0 = highest (smallest row offset / sourceY) on the left cable. */
 export function sortSpliceRouteEntries(
@@ -137,7 +313,18 @@ export function circuitLabelSpanForSide(
   return side === "left" ? sideSpans.left : sideSpans.right;
 }
 
-/** Minimum horizontal run from handle: past OS column, then inward jog. */
+/** Full stem→outer-edge label column (swatch + code + max circuit tag). */
+export function labelColumnRunForSide(
+  side: "left" | "right",
+  sideSpans: SideCircuitLabelSpan,
+): number {
+  return Math.max(
+    circuitLabelSpanForSide(side, sideSpans),
+    fiberRowPrefixWidth() + FIBER_CIRCUIT_MAX_WIDTH,
+  );
+}
+
+/** Minimum horizontal run from handle: past full label column, then inward jog. */
 export function minHorizontalRunFromHandle(
   handleX: number,
   diagramCenterX: number,
@@ -145,27 +332,67 @@ export function minHorizontalRunFromHandle(
   jog = MIN_SPLICE_HORIZONTAL_INSET,
 ): number {
   const side = canvasSideForHandle(handleX, diagramCenterX);
-  return circuitLabelSpanForSide(side, sideSpans) + jog;
+  return labelColumnRunForSide(side, sideSpans) + jog;
 }
 
-/** Feasible midX range: each handle gets label span + jog before the vertical leg. */
+/** Minimum midX that clears the side-wide OS label column before the vertical leg. */
+export function minClearMidXForHandle(
+  handleX: number,
+  diagramCenterX: number,
+  sideSpans: SideCircuitLabelSpan,
+  tagWidth = 0,
+  jog = MIN_SPLICE_HORIZONTAL_INSET,
+  handleAtLabelOuterEdge = false,
+): number {
+  const side = canvasSideForHandle(handleX, diagramCenterX);
+  const prefix = fiberRowPrefixWidth();
+  const columnRun = handleAtLabelOuterEdge
+    ? labelColumnRunForSide(side, sideSpans)
+    : circuitLabelSpanForSide(side, sideSpans);
+  if (side === "left") {
+    const columnClear = handleAtLabelOuterEdge
+      ? handleX - prefix - tagWidth + columnRun + jog
+      : handleX + columnRun + jog;
+    return Math.max(handleX + jog, columnClear);
+  }
+  const columnClear = handleAtLabelOuterEdge
+    ? handleX + prefix + tagWidth - columnRun - jog
+    : handleX - columnRun - jog;
+  return Math.min(handleX - jog, columnClear);
+}
+
+/** Feasible midX range: each handle clears the side-wide OS column + inward jog. */
 export function spliceMidXInsetBounds(
   sourceX: number,
   targetX: number,
   diagramCenterX: number,
   sideSpans: SideCircuitLabelSpan,
   jog = MIN_SPLICE_HORIZONTAL_INSET,
+  sourceTagWidth = 0,
+  targetTagWidth = 0,
+  sourceAtLabelOuterEdge = false,
+  targetAtLabelOuterEdge = false,
 ): { lo: number; hi: number } {
   let lo = Number.NEGATIVE_INFINITY;
   let hi = Number.POSITIVE_INFINITY;
 
-  for (const handleX of [sourceX, targetX]) {
+  for (const [handleX, tagWidth, atLabelEdge] of [
+    [sourceX, sourceTagWidth, sourceAtLabelOuterEdge] as const,
+    [targetX, targetTagWidth, targetAtLabelOuterEdge] as const,
+  ]) {
+    const clear = minClearMidXForHandle(
+      handleX,
+      diagramCenterX,
+      sideSpans,
+      tagWidth,
+      jog,
+      atLabelEdge,
+    );
     const side = canvasSideForHandle(handleX, diagramCenterX);
-    const run = circuitLabelSpanForSide(side, sideSpans) + jog;
     if (side === "left") {
-      lo = Math.max(lo, handleX + run);
+      lo = Math.max(lo, clear);
     } else {
-      hi = Math.min(hi, handleX - run);
+      hi = Math.min(hi, clear);
     }
   }
 
@@ -186,21 +413,34 @@ export function horizontalInsetOkFromHandle(
   diagramCenterX: number,
   sideSpans: SideCircuitLabelSpan,
   jog = MIN_SPLICE_HORIZONTAL_INSET,
+  tagWidth = 0,
+  handleAtLabelOuterEdge = false,
 ): boolean {
   const side = canvasSideForHandle(handleX, diagramCenterX);
-  const run = circuitLabelSpanForSide(side, sideSpans) + jog;
-  if (side === "left") return midX >= handleX + run - SPLICE_PATH_EPS;
-  return midX <= handleX - run + SPLICE_PATH_EPS;
+  const clear = minClearMidXForHandle(
+    handleX,
+    diagramCenterX,
+    sideSpans,
+    tagWidth,
+    jog,
+    handleAtLabelOuterEdge,
+  );
+  if (side === "left") return midX >= clear - SPLICE_PATH_EPS;
+  return midX <= clear + SPLICE_PATH_EPS;
 }
 
 /** Push midX toward center until both legs clear OS labels + inward jog. */
-export function clampMidXForMinHorizontalInset(
+export function enforceMinHorizontalInset(
   midX: number,
   sourceX: number,
   targetX: number,
   diagramCenterX: number,
   sideSpans: SideCircuitLabelSpan = defaultSideCircuitLabelSpan(),
   jog = MIN_SPLICE_HORIZONTAL_INSET,
+  sourceTagWidth = 0,
+  targetTagWidth = 0,
+  sourceAtLabelOuterEdge = false,
+  targetAtLabelOuterEdge = false,
 ): number {
   for (
     let attempt = jog;
@@ -213,13 +453,70 @@ export function clampMidXForMinHorizontalInset(
       diagramCenterX,
       sideSpans,
       attempt,
+      sourceTagWidth,
+      targetTagWidth,
+      sourceAtLabelOuterEdge,
+      targetAtLabelOuterEdge,
     );
     if (lo <= hi + SPLICE_PATH_EPS) {
       return Math.max(lo, Math.min(hi, midX));
     }
   }
-  const { lo, hi } = spliceRoutingBounds(sourceX, targetX);
-  return Math.max(lo, Math.min(hi, midX));
+
+  // EDGE-009 hard floor — never place the vertical leg over the OS/fan column.
+  let x = midX;
+  for (const [handleX, tagWidth, atLabelEdge] of [
+    [sourceX, sourceTagWidth, sourceAtLabelOuterEdge] as const,
+    [targetX, targetTagWidth, targetAtLabelOuterEdge] as const,
+  ]) {
+    const clear = minClearMidXForHandle(
+      handleX,
+      diagramCenterX,
+      sideSpans,
+      tagWidth,
+      MIN_HORIZONTAL_INSET_FLOOR,
+      atLabelEdge,
+    );
+    const side = canvasSideForHandle(handleX, diagramCenterX);
+    if (side === "left") {
+      x = Math.max(x, clear);
+    } else {
+      x = Math.min(x, clear);
+    }
+  }
+  const routeBounds = spliceRoutingBounds(sourceX, targetX);
+  if (routeBounds.lo <= routeBounds.hi + SPLICE_PATH_EPS) {
+    return Math.max(routeBounds.lo, Math.min(routeBounds.hi, x));
+  }
+  // Same-column stems: routing margin band is empty — keep OS clearance.
+  return x;
+}
+
+/** @deprecated alias — use enforceMinHorizontalInset */
+export function clampMidXForMinHorizontalInset(
+  midX: number,
+  sourceX: number,
+  targetX: number,
+  diagramCenterX: number,
+  sideSpans: SideCircuitLabelSpan = defaultSideCircuitLabelSpan(),
+  jog = MIN_SPLICE_HORIZONTAL_INSET,
+  sourceTagWidth = 0,
+  targetTagWidth = 0,
+  sourceAtLabelOuterEdge = false,
+  targetAtLabelOuterEdge = false,
+): number {
+  return enforceMinHorizontalInset(
+    midX,
+    sourceX,
+    targetX,
+    diagramCenterX,
+    sideSpans,
+    jog,
+    sourceTagWidth,
+    targetTagWidth,
+    sourceAtLabelOuterEdge,
+    targetAtLabelOuterEdge,
+  );
 }
 
 /** Pick route shape from handle coordinates (handle → handle span). */
@@ -376,6 +673,33 @@ export type SpliceRoutingLane = {
   targetHorizY?: number;
 };
 
+export function routingLaneDataFromLane(
+  lane: SpliceRoutingLane,
+): SpliceRoutingLaneData {
+  return {
+    routingMidX: lane.midX,
+    ...(lane.jogX !== undefined ? { routingJogX: lane.jogX } : {}),
+    ...(lane.sourceHorizY !== undefined
+      ? { routingSourceHorizY: lane.sourceHorizY }
+      : {}),
+    ...(lane.targetHorizY !== undefined
+      ? { routingTargetHorizY: lane.targetHorizY }
+      : {}),
+  };
+}
+
+export function routingLaneFromData(
+  data?: Partial<SpliceRoutingLaneData>,
+): SpliceRoutingLane | undefined {
+  if (data?.routingMidX === undefined) return undefined;
+  return {
+    midX: data.routingMidX,
+    jogX: data.routingJogX,
+    sourceHorizY: data.routingSourceHorizY,
+    targetHorizY: data.routingTargetHorizY,
+  };
+}
+
 export const MAX_SPLICE_BENDS = 2;
 
 /** Max bends when a tube bundle uses a shared horizontal trunk before lane spread. */
@@ -398,13 +722,15 @@ export function maxSpliceBendsForLane(
     lane.sourceHorizY !== undefined &&
     Math.abs(lane.sourceHorizY - sourceY) > SPLICE_PATH_EPS
   ) {
-    max += 1;
+    // clearX horizontal lead-in + Y-track shift adds one bend vs legacy path
+    max += 2;
   }
   if (
     lane.targetHorizY !== undefined &&
     Math.abs(lane.targetHorizY - targetY) > SPLICE_PATH_EPS
   ) {
-    max += 1;
+    // clearX horizontal lead-in + Y-track shift on target leg
+    max += 2;
   }
   return max;
 }
@@ -421,6 +747,10 @@ export function buildSplicePath(
   midX: number,
   jogX?: number,
   sideHoriz?: Pick<SpliceRoutingLane, "sourceHorizY" | "targetHorizY">,
+  sideSpans: SideCircuitLabelSpan = defaultSideCircuitLabelSpan(),
+  diagramCenterX = (sourceX + targetX) / 2,
+  sourceTagWidth = 0,
+  targetTagWidth = 0,
 ): SplicePathResult {
   const template = pickSpliceRouteTemplate(sourceX, sourceY, targetX, targetY);
 
@@ -447,6 +777,10 @@ export function buildSplicePath(
     midX,
     jogX,
     sideHoriz,
+    sideSpans,
+    diagramCenterX,
+    sourceTagWidth,
+    targetTagWidth,
   );
   return {
     ...demarcated,
@@ -471,7 +805,59 @@ export function buildOrthogonalSplicePath(
 }
 
 /**
+ * First X on the handle row where a vertical bend is allowed (EDGE-009).
+ * Clears the side-wide OS label column plus inward jog before turning vertical.
+ */
+export function inwardClearXBeforeVertical(
+  handleX: number,
+  anchorX: number,
+  diagramCenterX: number,
+  sideSpans: SideCircuitLabelSpan = defaultSideCircuitLabelSpan(),
+  tagWidth = 0,
+  jog = MIN_SPLICE_HORIZONTAL_INSET,
+  handleAtLabelOuterEdge = true,
+): number {
+  const minClear = minClearMidXForHandle(
+    handleX,
+    diagramCenterX,
+    sideSpans,
+    tagWidth,
+    jog,
+    handleAtLabelOuterEdge,
+  );
+  const side = canvasSideForHandle(handleX, diagramCenterX);
+  if (side === "left") {
+    return Math.min(anchorX, Math.max(minClear, handleX));
+  }
+  return Math.max(anchorX, Math.min(minClear, handleX));
+}
+
+/** Symmetric clear-X for the target handle (same math, inward from target). */
+export function targetClearXBeforeVertical(
+  targetX: number,
+  anchorX: number,
+  diagramCenterX: number,
+  sideSpans: SideCircuitLabelSpan = defaultSideCircuitLabelSpan(),
+  tagWidth = 0,
+  jog = MIN_SPLICE_HORIZONTAL_INSET,
+  handleAtLabelOuterEdge = true,
+): number {
+  return inwardClearXBeforeVertical(
+    targetX,
+    anchorX,
+    diagramCenterX,
+    sideSpans,
+    tagWidth,
+    jog,
+    handleAtLabelOuterEdge,
+  );
+}
+
+/**
  * Left leg stops at the fusion dot; right leg starts there (different strand colors).
+ *
+ * EDGE-009: the source handle row runs horizontally inward before any vertical bend.
+ * Y-offset tracks (`sourceHorizY`) bend at `clearX`, never at `sourceX`.
  */
 export function buildDemarcatedSplicePaths(
   sourceX: number,
@@ -481,6 +867,10 @@ export function buildDemarcatedSplicePaths(
   midX: number,
   jogX?: number,
   sideHoriz?: Pick<SpliceRoutingLane, "sourceHorizY" | "targetHorizY">,
+  sideSpans: SideCircuitLabelSpan = defaultSideCircuitLabelSpan(),
+  diagramCenterX = (sourceX + targetX) / 2,
+  sourceTagWidth = 0,
+  targetTagWidth = 0,
 ): {
   leftPath: string;
   rightPath: string;
@@ -493,27 +883,56 @@ export function buildDemarcatedSplicePaths(
   const trunkX = jogX ?? midX;
   const usesBundleJog =
     jogX !== undefined && Math.abs(trunkX - midX) > SPLICE_PATH_EPS;
-  const leftParts = [`M ${sourceX},${sourceY}`];
-  if (Math.abs(srcHY - sourceY) > SPLICE_PATH_EPS) {
-    leftParts.push(`L ${sourceX},${srcHY}`);
+  const sourceClearX = inwardClearXBeforeVertical(
+    sourceX,
+    midX,
+    diagramCenterX,
+    sideSpans,
+    sourceTagWidth,
+  );
+  const targetClearX = targetClearXBeforeVertical(
+    targetX,
+    midX,
+    diagramCenterX,
+    sideSpans,
+    targetTagWidth,
+  );
+  const sourceOffsetY = Math.abs(srcHY - sourceY) > SPLICE_PATH_EPS;
+  const targetOffsetY = Math.abs(tgtHY - targetY) > SPLICE_PATH_EPS;
+
+  const leftParts = [`M ${sourceX},${sourceY}`, `L ${sourceClearX},${sourceY}`];
+
+  if (sourceOffsetY) {
+    leftParts.push(`L ${sourceClearX},${srcHY}`);
+    if (usesBundleJog) {
+      leftParts.push(`L ${trunkX},${srcHY}`, `L ${midX},${srcHY}`);
+    } else {
+      leftParts.push(`L ${midX},${srcHY}`);
+    }
+  } else if (usesBundleJog) {
+    if (Math.abs(trunkX - sourceClearX) > SPLICE_PATH_EPS) {
+      leftParts.push(`L ${trunkX},${sourceY}`);
+    }
+    if (Math.abs(midX - trunkX) > SPLICE_PATH_EPS) {
+      leftParts.push(`L ${midX},${sourceY}`);
+    }
+  } else if (Math.abs(midX - sourceClearX) > SPLICE_PATH_EPS) {
+    leftParts.push(`L ${midX},${sourceY}`);
   }
-  if (usesBundleJog) {
-    leftParts.push(
-      `L ${trunkX},${srcHY}`,
-      `L ${midX},${srcHY}`,
-      `L ${midX},${spliceY}`,
+
+  leftParts.push(`L ${midX},${spliceY}`);
+
+  const rightParts = [`M ${midX},${spliceY}`, `L ${midX},${tgtHY}`];
+  if (targetOffsetY) {
+    rightParts.push(
+      `L ${targetClearX},${tgtHY}`,
+      `L ${targetClearX},${targetY}`,
+      `L ${targetX},${targetY}`,
     );
   } else {
-    leftParts.push(`L ${midX},${srcHY}`, `L ${midX},${spliceY}`);
+    rightParts.push(`L ${targetX},${tgtHY}`);
   }
-  const rightParts = [
-    `M ${midX},${spliceY}`,
-    `L ${midX},${tgtHY}`,
-    `L ${targetX},${tgtHY}`,
-  ];
-  if (Math.abs(tgtHY - targetY) > SPLICE_PATH_EPS) {
-    rightParts.push(`L ${targetX},${targetY}`);
-  }
+
   return {
     leftPath: leftParts.join(" "),
     rightPath: rightParts.join(" "),
@@ -636,6 +1055,183 @@ function flattenTubeBundleOrder(
   return groupCandidatesByTubeBundle(candidates).flat();
 }
 
+function sortCandidatesByRowOrder(
+  candidates: MidXLaneCandidate[],
+): MidXLaneCandidate[] {
+  return [...candidates].sort(
+    (a, b) =>
+      a.rowOffset - b.rowOffset ||
+      a.sourceY - b.sourceY ||
+      a.targetY - b.targetY ||
+      a.id.localeCompare(b.id),
+  );
+}
+
+/** One bend-direction class per tube bundle — top fiber pair decides for the group. */
+export function bundleMidOrderInverts(members: MidXLaneCandidate[]): boolean {
+  const anchor = sortCandidatesByRowOrder(members)[0];
+  if (!anchor) return false;
+  return spliceMidOrderInverts(
+    anchor.sourceX,
+    anchor.sourceY,
+    anchor.targetX,
+    anchor.targetY,
+  );
+}
+
+function isCoherentTubeBundle(members: MidXLaneCandidate[]): boolean {
+  return members.length > 1 && members.every((m) => m.tubeBundleKey);
+}
+
+function packAnchorStart(
+  candidates: MidXLaneCandidate[],
+  laneCount: number,
+  sep: number,
+  packLo: number,
+  packHi: number,
+  globalMaxRowOffset?: number,
+): number {
+  const localMax = candidates.reduce((m, c) => Math.max(m, c.rowOffset), 0);
+  const maxRowOffsetForIdeal = Math.max(globalMaxRowOffset ?? 0, localMax);
+  const idealMidXs = candidates.map((c) =>
+    idealSpliceMidXFromRowOffset(c, maxRowOffsetForIdeal),
+  );
+  const sortedIdeals = [...idealMidXs].sort((a, b) => a - b);
+  let medianIdeal: number;
+  if (sortedIdeals.length === 0) {
+    medianIdeal = (packLo + packHi) / 2;
+  } else if (sortedIdeals.length % 2 === 0) {
+    const mid = sortedIdeals.length / 2;
+    medianIdeal = (sortedIdeals[mid - 1]! + sortedIdeals[mid]!) / 2;
+  } else {
+    medianIdeal = sortedIdeals[Math.floor(sortedIdeals.length / 2)]!;
+  }
+  const totalSpan = (laneCount - 1) * sep;
+  const startUnclamped = medianIdeal - totalSpan / 2;
+  const packSpan = Math.max(0, packHi - packLo);
+  const startMin = packLo;
+  const startMax = packLo + Math.max(0, packSpan - totalSpan);
+  return Math.min(Math.max(startUnclamped, startMin), startMax);
+}
+
+/** Row-offset order preserved — one vertical elbow column per tube bundle. */
+function packCoherentTubeBundleMidXLanes(
+  members: MidXLaneCandidate[],
+  minSep: number,
+  centerX: number,
+  sideSpans: SideCircuitLabelSpan,
+  globalMaxRowOffset?: number,
+  packLo?: number,
+  packHi?: number,
+): Map<string, number> {
+  const result = new Map<string, number>();
+  const sorted = sortCandidatesByRowOrder(members);
+  if (sorted.length === 0) return result;
+
+  const sourceX = sorted[0]!.sourceX;
+  const targetX = sorted[0]!.targetX;
+  const bounds = spliceRoutingBounds(sourceX, targetX);
+  const insetBounds = spliceMidXInsetBounds(
+    sourceX,
+    targetX,
+    centerX,
+    sideSpans,
+  );
+  const lo = packLo ?? Math.max(bounds.lo, insetBounds.lo);
+  const hi =
+    packHi ??
+    Math.min(
+      bounds.hi,
+      insetBounds.hi <= insetBounds.lo ? bounds.hi : insetBounds.hi,
+    );
+  const effectiveLo = lo <= hi ? lo : bounds.lo;
+  const effectiveHi = lo <= hi ? hi : bounds.hi;
+
+  if (sorted.length === 1) {
+    const only = sorted[0]!;
+    const maxRowOffset = Math.max(0, only.rowOffset);
+    const raw = idealSpliceMidXFromRowOffset(only, maxRowOffset);
+    result.set(
+      only.id,
+      clampMidXForMinHorizontalInset(
+        raw,
+        only.sourceX,
+        only.targetX,
+        centerX,
+        sideSpans,
+      ),
+    );
+    return result;
+  }
+
+  const sep = minSep;
+  const rawStart = packAnchorStart(
+    sorted,
+    sorted.length,
+    sep,
+    effectiveLo,
+    effectiveHi,
+    globalMaxRowOffset,
+  );
+  const start = clampMidXForMinHorizontalInset(
+    rawStart,
+    sourceX,
+    targetX,
+    centerX,
+    sideSpans,
+  );
+
+  // Parallel bundle: midX follows row-offset / color order left→right.
+  for (let i = 0; i < sorted.length; i++) {
+    result.set(sorted[i]!.id, start + i * sep);
+  }
+  return result;
+}
+
+function packMultipleCoherentTubeBundlesMidXLanes(
+  bundles: MidXLaneCandidate[][],
+  minSep: number,
+  centerX: number,
+  sideSpans: SideCircuitLabelSpan,
+  packLo: number,
+  packHi: number,
+): Map<string, number> {
+  const result = new Map<string, number>();
+  const orderedBundles = [...bundles].sort((a, b) => {
+    const minA = Math.min(...a.map((m) => m.rowOffset));
+    const minB = Math.min(...b.map((m) => m.rowOffset));
+    return minA - minB;
+  });
+
+  const blockSpans = orderedBundles.map((bundle) =>
+    Math.max(0, bundle.length - 1) * minSep,
+  );
+  const gapCount = Math.max(0, orderedBundles.length - 1);
+  const totalSpan =
+    blockSpans.reduce((sum, span) => sum + span, 0) + gapCount * minSep;
+  const packSpan = Math.max(0, packHi - packLo);
+  let blockStart = packLo + Math.max(0, (packSpan - totalSpan) / 2);
+
+  for (let bi = 0; bi < orderedBundles.length; bi++) {
+    const sorted = sortCandidatesByRowOrder(orderedBundles[bi]!);
+    const sourceX = sorted[0]!.sourceX;
+    const targetX = sorted[0]!.targetX;
+    const start = clampMidXForMinHorizontalInset(
+      blockStart,
+      sourceX,
+      targetX,
+      centerX,
+      sideSpans,
+    );
+    for (let i = 0; i < sorted.length; i++) {
+      result.set(sorted[i]!.id, start + i * minSep);
+    }
+    blockStart = start + blockSpans[bi]! + minSep;
+  }
+
+  return result;
+}
+
 function bundleJogXForMembers(
   members: Array<{ midX: number; sourceX: number }>,
   diagramCenterX: number,
@@ -719,6 +1315,32 @@ function packSameSideMidXLanes(
         sideSpans,
       ),
     );
+    return result;
+  }
+
+  const bundles = groupCandidatesByTubeBundle(candidates);
+  if (bundles.length === 1 && isCoherentTubeBundle(bundles[0]!)) {
+    const sorted = sortCandidatesByRowOrder(bundles[0]!);
+    const baseRun =
+      circuitLabelSpanForSide(
+        canvasSideForHandle(columnX, diagramCenterX),
+        sideSpans,
+      ) + MIN_SPLICE_HORIZONTAL_INSET;
+    const base = columnX + inward * baseRun;
+    for (let i = 0; i < sorted.length; i++) {
+      const raw = base + inward * i * sep;
+      const candidate = sorted[i]!;
+      result.set(
+        candidate.id,
+        clampMidXForMinHorizontalInset(
+          raw,
+          candidate.sourceX,
+          candidate.targetX,
+          diagramCenterX,
+          sideSpans,
+        ),
+      );
+    }
     return result;
   }
 
@@ -833,6 +1455,38 @@ export function packMidXLanes(
     centerX,
     sideSpans,
   );
+  const insetLo = Math.max(lo, insetBounds.lo);
+  const insetHi = Math.min(hi, insetBounds.hi);
+  const packLo = insetLo <= insetHi ? insetLo : lo;
+  const packHi = insetLo <= insetHi ? insetHi : hi;
+
+  const bundles = groupCandidatesByTubeBundle(candidates);
+  const coherentBundles = bundles.filter((bundle) => isCoherentTubeBundle(bundle));
+  if (
+    coherentBundles.length === 1 &&
+    coherentBundles[0]!.length === candidates.length
+  ) {
+    return packCoherentTubeBundleMidXLanes(
+      candidates,
+      minSep,
+      centerX,
+      sideSpans,
+      globalMaxRowOffset,
+      packLo,
+      packHi,
+    );
+  }
+  if (coherentBundles.length >= 2) {
+    return packMultipleCoherentTubeBundlesMidXLanes(
+      coherentBundles,
+      minSep,
+      centerX,
+      sideSpans,
+      packLo,
+      packHi,
+    );
+  }
+
   const downward: MidXLaneCandidate[] = [];
   const upward: MidXLaneCandidate[] = [];
 
@@ -857,10 +1511,6 @@ export function packMidXLanes(
   const upwardOrdered = flattenTubeBundleOrder(upward);
 
   const laneCount = downwardOrdered.length + upwardOrdered.length;
-  const insetLo = Math.max(lo, insetBounds.lo);
-  const insetHi = Math.min(hi, insetBounds.hi);
-  const packLo = insetLo <= insetHi ? insetLo : lo;
-  const packHi = insetLo <= insetHi ? insetHi : hi;
   const packSpan = Math.max(0, packHi - packLo);
 
   // Tight 24px bundle — keeps grouped strands visually together.
@@ -927,12 +1577,30 @@ export function packMidXLanes(
   return result;
 }
 
+function enforceDistinctMidXLanesForMembers(
+  result: Map<string, number>,
+  members: MidXLaneCandidate[],
+  minSep: number,
+): void {
+  const sorted = sortCandidatesByRowOrder(members);
+  if (sorted.length === 0) return;
+  let prevMid = result.get(sorted[0]!.id)!;
+  for (let i = 1; i < sorted.length; i++) {
+    const id = sorted[i]!.id;
+    let mid = result.get(id)!;
+    if (mid - prevMid < minSep - SPLICE_PATH_EPS) {
+      mid = prevMid + minSep;
+      result.set(id, mid);
+    }
+    prevMid = mid;
+  }
+}
+
 function enforceDistinctMidXLanes(
   result: Map<string, number>,
   candidates: MidXLaneCandidate[],
   minSep: number,
 ): void {
-  // Per-zone pass first: keeps row-offset order intact within each zone.
   const byZone = new Map<string, MidXLaneCandidate[]>();
   for (const candidate of candidates) {
     const key = spliceRoutingZoneKey(candidate.sourceX, candidate.targetX);
@@ -942,18 +1610,21 @@ function enforceDistinctMidXLanes(
   }
 
   for (const group of byZone.values()) {
-    const sorted = [...group].sort(
-      (a, b) => (result.get(a.id) ?? 0) - (result.get(b.id) ?? 0),
-    );
-    let prevMid = sorted[0] ? result.get(sorted[0].id)! : 0;
-    for (let i = 1; i < sorted.length; i++) {
-      const id = sorted[i]!.id;
-      let mid = result.get(id)!;
-      if (mid - prevMid < minSep - SPLICE_PATH_EPS) {
-        mid = prevMid + minSep;
-        result.set(id, mid);
+    const bundles = groupCandidatesByTubeBundle(group);
+    const bundledIds = new Set<string>();
+
+    for (const bundle of bundles) {
+      if (bundle.length > 1 && isCoherentTubeBundle(bundle)) {
+        enforceDistinctMidXLanesForMembers(result, bundle, minSep);
+        for (const member of bundle) {
+          bundledIds.add(member.id);
+        }
       }
-      prevMid = mid;
+    }
+
+    const remainder = group.filter((c) => !bundledIds.has(c.id));
+    if (remainder.length > 0) {
+      enforceDistinctMidXLanesForMembers(result, remainder, minSep);
     }
   }
 }
@@ -1018,22 +1689,142 @@ function verticalSpanOverlaps(
  * same X with overlapping Y spans on busy multi-cable diagrams. A single
  * occupied ledger across all candidates prevents cross-zone vertical stack-up.
  */
+function assignVertLanesForTubeBundle(
+  members: MidXLaneCandidate[],
+  lanes: Map<string, SpliceRoutingLane>,
+  diagramCenterX: number,
+  sideSpans: SideCircuitLabelSpan,
+  occupied: Array<{ x: number; y0: number; y1: number }>,
+): void {
+  const sorted = sortCandidatesByRowOrder(members);
+  const columnX = (sorted[0]!.sourceX + sorted[0]!.targetX) / 2;
+  const inward =
+    inwardSignForColumn(columnX, diagramCenterX) > 0 ? 1 : -1;
+  const insetBounds = spliceMidXInsetBounds(
+    sorted[0]!.sourceX,
+    sorted[0]!.targetX,
+    diagramCenterX,
+    sideSpans,
+  );
+
+  let bundleLaneIndex = 0;
+  for (;;) {
+    let allClear = true;
+    const placements: Array<{
+      candidate: MidXLaneCandidate;
+      lane: SpliceRoutingLane;
+      finalX: number;
+      y0: number;
+      y1: number;
+    }> = [];
+
+    for (const candidate of sorted) {
+      const lane = lanes.get(candidate.id)!;
+      const xCandidate = lane.midX + inward * bundleLaneIndex * SPLICE_LANE_SEP;
+      if (
+        (inward > 0 && xCandidate > insetBounds.hi + SPLICE_PATH_EPS) ||
+        (inward < 0 && xCandidate < insetBounds.lo - SPLICE_PATH_EPS)
+      ) {
+        allClear = false;
+        break;
+      }
+      const srcHY = lane.sourceHorizY ?? candidate.sourceY;
+      const tgtHY = lane.targetHorizY ?? candidate.targetY;
+      const spliceY = (candidate.sourceY + candidate.targetY) / 2;
+      const y0 = Math.min(srcHY, spliceY, tgtHY);
+      const y1 = Math.max(srcHY, spliceY, tgtHY);
+      const conflict = occupied.some(
+        (existing) =>
+          Math.abs(existing.x - xCandidate) <= SPLICE_PATH_EPS &&
+          verticalSpanOverlaps(y0, y1, existing.y0, existing.y1),
+      );
+      if (conflict) {
+        allClear = false;
+        break;
+      }
+      placements.push({
+        candidate,
+        lane,
+        finalX: xCandidate,
+        y0,
+        y1,
+      });
+    }
+
+    if (allClear) {
+      for (const placement of placements) {
+        occupied.push({
+          x: placement.finalX,
+          y0: placement.y0,
+          y1: placement.y1,
+        });
+        if (
+          Math.abs(placement.finalX - placement.lane.midX) > SPLICE_PATH_EPS
+        ) {
+          lanes.set(placement.candidate.id, {
+            ...placement.lane,
+            midX: placement.finalX,
+          });
+        }
+      }
+      return;
+    }
+
+    if (bundleLaneIndex > 64) {
+      for (const candidate of sorted) {
+        const lane = lanes.get(candidate.id)!;
+        const srcHY = lane.sourceHorizY ?? candidate.sourceY;
+        const tgtHY = lane.targetHorizY ?? candidate.targetY;
+        const spliceY = (candidate.sourceY + candidate.targetY) / 2;
+        occupied.push({
+          x: lane.midX,
+          y0: Math.min(srcHY, spliceY, tgtHY),
+          y1: Math.max(srcHY, spliceY, tgtHY),
+        });
+      }
+      return;
+    }
+
+    bundleLaneIndex += 1;
+  }
+}
+
 function assignSideVertLaneXs(
   candidates: MidXLaneCandidate[],
   lanes: Map<string, SpliceRoutingLane>,
+  sideSpans: SideCircuitLabelSpan,
 ): void {
   const eligible = candidates.filter((c) => lanes.has(c.id));
-  eligible.sort(
-    (a, b) =>
-      a.rowOffset - b.rowOffset ||
-      a.sourceY - b.sourceY ||
-      a.targetY - b.targetY ||
-      a.id.localeCompare(b.id),
-  );
   const diagramCenterX = globalDiagramCenterX(candidates);
   const occupied: Array<{ x: number; y0: number; y1: number }> = [];
+  const processed = new Set<string>();
 
-  for (const candidate of eligible) {
+  const bundleGroups = groupCandidatesByTubeBundle(
+    eligible.filter((c) => c.tubeBundleKey),
+  ).filter((bundle) => bundle.length > 1);
+
+  for (const bundle of bundleGroups.sort((a, b) => {
+    const minA = Math.min(...a.map((m) => m.rowOffset));
+    const minB = Math.min(...b.map((m) => m.rowOffset));
+    return minA - minB;
+  })) {
+    assignVertLanesForTubeBundle(
+      bundle,
+      lanes,
+      diagramCenterX,
+      sideSpans,
+      occupied,
+    );
+    for (const member of bundle) {
+      processed.add(member.id);
+    }
+  }
+
+  const singles = sortCandidatesByRowOrder(
+    eligible.filter((c) => !processed.has(c.id)),
+  );
+
+  for (const candidate of singles) {
     const lane = lanes.get(candidate.id)!;
     const srcHY = lane.sourceHorizY ?? candidate.sourceY;
     const tgtHY = lane.targetHorizY ?? candidate.targetY;
@@ -1055,7 +1846,7 @@ function assignSideVertLaneXs(
       candidate.sourceX,
       candidate.targetX,
       diagramCenterX,
-      defaultSideCircuitLabelSpan(),
+      sideSpans,
     );
 
     let laneIndex = 0;
@@ -1163,14 +1954,19 @@ export function assignSpliceRoutingLanes(
     }
   }
 
-  const sideHoriz = assignSideHorizLaneYs(candidates, result);
+  const sideHoriz = assignSideHorizLaneYs(
+    candidates,
+    result,
+    sideSpans,
+    diagramCenterX,
+  );
   for (const [id, offsets] of sideHoriz) {
     const lane = result.get(id);
     if (!lane) continue;
     result.set(id, { ...lane, ...offsets });
   }
 
-  assignSideVertLaneXs(candidates, result);
+  assignSideVertLaneXs(candidates, result, sideSpans);
 
   return result;
 }
@@ -1179,27 +1975,73 @@ type OrthogonalSegment =
   | { kind: "h"; y: number; x0: number; x1: number }
   | { kind: "v"; x: number; y0: number; y1: number };
 
-function sourceHorizSegments(
+function sourceGapHorizSegments(
   sourceX: number,
   midX: number,
   jogX: number | undefined,
   sourceHorizY: number,
+  sideSpans: SideCircuitLabelSpan,
+  diagramCenterX: number,
+  sourceTagWidth = 0,
 ): Array<{ kind: "h"; y: number; x0: number; x1: number }> {
   const trunkX = jogX ?? midX;
   const usesBundleJog =
     jogX !== undefined && Math.abs(trunkX - midX) > SPLICE_PATH_EPS;
-  const segments = [
-    { kind: "h" as const, y: sourceHorizY, x0: sourceX, x1: trunkX },
-  ];
+  const sourceClearX = inwardClearXBeforeVertical(
+    sourceX,
+    midX,
+    diagramCenterX,
+    sideSpans,
+    sourceTagWidth,
+  );
+  const segments: Array<{ kind: "h"; y: number; x0: number; x1: number }> = [];
   if (usesBundleJog) {
     segments.push({
       kind: "h" as const,
       y: sourceHorizY,
-      x0: trunkX,
+      x0: sourceClearX,
+      x1: trunkX,
+    });
+    if (Math.abs(trunkX - midX) > SPLICE_PATH_EPS) {
+      segments.push({
+        kind: "h" as const,
+        y: sourceHorizY,
+        x0: trunkX,
+        x1: midX,
+      });
+    }
+  } else if (Math.abs(midX - sourceClearX) > SPLICE_PATH_EPS) {
+    segments.push({
+      kind: "h" as const,
+      y: sourceHorizY,
+      x0: sourceClearX,
       x1: midX,
     });
   }
   return segments;
+}
+
+function targetGapHorizSegments(
+  targetX: number,
+  targetY: number,
+  midX: number,
+  targetHorizY: number,
+  sideSpans: SideCircuitLabelSpan,
+  diagramCenterX: number,
+  targetTagWidth = 0,
+): Array<{ kind: "h"; y: number; x0: number; x1: number }> {
+  const targetClearX = targetClearXBeforeVertical(
+    targetX,
+    midX,
+    diagramCenterX,
+    sideSpans,
+    targetTagWidth,
+  );
+  const targetOffsetY = Math.abs(targetHorizY - targetY) > SPLICE_PATH_EPS;
+  if (targetOffsetY) {
+    return [{ kind: "h" as const, y: targetHorizY, x0: midX, x1: targetClearX }];
+  }
+  return [{ kind: "h" as const, y: targetHorizY, x0: midX, x1: targetX }];
 }
 
 function sideHorizLaneSign(anchorY: number, diagramCenterY: number): 1 | -1 {
@@ -1211,20 +2053,26 @@ function horizontalSegmentsForLane(
   lane: SpliceRoutingLane,
   sourceHorizY: number,
   targetHorizY: number,
+  sideSpans: SideCircuitLabelSpan,
+  diagramCenterX: number,
 ): Array<{ kind: "h"; y: number; x0: number; x1: number }> {
   return [
-    ...sourceHorizSegments(
+    ...sourceGapHorizSegments(
       candidate.sourceX,
       lane.midX,
       lane.jogX,
       sourceHorizY,
+      sideSpans,
+      diagramCenterX,
     ),
-    {
-      kind: "h" as const,
-      y: targetHorizY,
-      x0: lane.midX,
-      x1: candidate.targetX,
-    },
+    ...targetGapHorizSegments(
+      candidate.targetX,
+      candidate.targetY,
+      lane.midX,
+      targetHorizY,
+      sideSpans,
+      diagramCenterX,
+    ),
   ];
 }
 
@@ -1235,6 +2083,123 @@ function horizSegmentsOverlapOccupied(
   return occupied.some((existing) =>
     segments.some((seg) => parallelSpliceSegmentsOverlap(seg, existing)),
   );
+}
+
+function horizOffsetsForBundleLane(
+  members: MidXLaneCandidate[],
+  lanes: Map<string, SpliceRoutingLane>,
+  diagramCenterY: number,
+  sideSpans: SideCircuitLabelSpan,
+  diagramCenterX: number,
+  sourceLane: number,
+  targetLane: number,
+): {
+  fits: boolean;
+  segments: Array<{ kind: "h"; y: number; x0: number; x1: number }>;
+  offsetsById: Map<
+    string,
+    Pick<SpliceRoutingLane, "sourceHorizY" | "targetHorizY">
+  >;
+} {
+  const segments: Array<{ kind: "h"; y: number; x0: number; x1: number }> =
+    [];
+  const offsetsById = new Map<
+    string,
+    Pick<SpliceRoutingLane, "sourceHorizY" | "targetHorizY">
+  >();
+
+  for (const candidate of members) {
+    const lane = lanes.get(candidate.id);
+    if (!lane) return { fits: false, segments, offsetsById };
+    const sourceSign = sideHorizLaneSign(candidate.sourceY, diagramCenterY);
+    const targetSign = sideHorizLaneSign(candidate.targetY, diagramCenterY);
+    const sourceHorizY =
+      candidate.sourceY + sourceSign * sourceLane * SPLICE_LANE_SEP;
+    const targetHorizY =
+      candidate.targetY + targetSign * targetLane * SPLICE_LANE_SEP;
+    segments.push(
+      ...horizontalSegmentsForLane(
+        candidate,
+        lane,
+        sourceHorizY,
+        targetHorizY,
+        sideSpans,
+        diagramCenterX,
+      ),
+    );
+    const offsets: Pick<SpliceRoutingLane, "sourceHorizY" | "targetHorizY"> =
+      {};
+    if (Math.abs(sourceHorizY - candidate.sourceY) > SPLICE_PATH_EPS) {
+      offsets.sourceHorizY = sourceHorizY;
+    }
+    if (Math.abs(targetHorizY - candidate.targetY) > SPLICE_PATH_EPS) {
+      offsets.targetHorizY = targetHorizY;
+    }
+    if (
+      offsets.sourceHorizY !== undefined ||
+      offsets.targetHorizY !== undefined
+    ) {
+      offsetsById.set(candidate.id, offsets);
+    }
+  }
+
+  return { fits: true, segments, offsetsById };
+}
+
+function assignHorizLanesForTubeBundle(
+  members: MidXLaneCandidate[],
+  lanes: Map<string, SpliceRoutingLane>,
+  diagramCenterY: number,
+  sideSpans: SideCircuitLabelSpan,
+  diagramCenterX: number,
+  occupied: Array<{ kind: "h"; y: number; x0: number; x1: number }>,
+  result: Map<string, Pick<SpliceRoutingLane, "sourceHorizY" | "targetHorizY">>,
+): void {
+  const sorted = sortCandidatesByRowOrder(members);
+  let sourceLane = 0;
+  let targetLane = 0;
+  let attempts = 0;
+
+  for (;;) {
+    if (attempts++ > 64) {
+      const fallback = horizOffsetsForBundleLane(
+        sorted,
+        lanes,
+        diagramCenterY,
+        sideSpans,
+        diagramCenterX,
+        0,
+        0,
+      );
+      occupied.push(...fallback.segments);
+      for (const [id, offsets] of fallback.offsetsById) {
+        result.set(id, offsets);
+      }
+      return;
+    }
+    const attempt = horizOffsetsForBundleLane(
+      sorted,
+      lanes,
+      diagramCenterY,
+      sideSpans,
+      diagramCenterX,
+      sourceLane,
+      targetLane,
+    );
+    if (
+      attempt.fits &&
+      !horizSegmentsOverlapOccupied(attempt.segments, occupied)
+    ) {
+      occupied.push(...attempt.segments);
+      for (const [id, offsets] of attempt.offsetsById) {
+        result.set(id, offsets);
+      }
+      return;
+    }
+
+    sourceLane += 1;
+    targetLane += 1;
+  }
 }
 
 /**
@@ -1249,12 +2214,17 @@ function horizSegmentsOverlapOccupied(
 function assignSideHorizLaneYs(
   candidates: MidXLaneCandidate[],
   lanes: Map<string, SpliceRoutingLane>,
+  sideSpans: SideCircuitLabelSpan = defaultSideCircuitLabelSpan(),
+  diagramCenterX?: number,
 ): Map<string, Pick<SpliceRoutingLane, "sourceHorizY" | "targetHorizY">> {
   const result = new Map<
     string,
     Pick<SpliceRoutingLane, "sourceHorizY" | "targetHorizY">
   >();
   if (candidates.length === 0) return result;
+
+  const resolvedCenterX =
+    diagramCenterX ?? globalDiagramCenterX(candidates);
 
   let minY = Number.POSITIVE_INFINITY;
   let maxY = Number.NEGATIVE_INFINITY;
@@ -1265,23 +2235,47 @@ function assignSideHorizLaneYs(
   const diagramCenterY = (minY + maxY) / 2;
 
   const eligible = candidates.filter((c) => lanes.has(c.id));
-  eligible.sort(
-    (a, b) =>
-      a.rowOffset - b.rowOffset ||
-      a.sourceY - b.sourceY ||
-      a.targetY - b.targetY ||
-      a.id.localeCompare(b.id),
-  );
-  const occupied: Array<{ kind: "h"; y: number; x0: number; x1: number }> = [];
+  const occupied: Array<{ kind: "h"; y: number; x0: number; x1: number }> =
+    [];
+  const processed = new Set<string>();
 
-  for (const candidate of eligible) {
+  const bundleGroups = groupCandidatesByTubeBundle(
+    eligible.filter((c) => c.tubeBundleKey),
+  ).filter((bundle) => bundle.length > 1);
+
+  for (const bundle of bundleGroups.sort((a, b) => {
+    const minA = Math.min(...a.map((m) => m.rowOffset));
+    const minB = Math.min(...b.map((m) => m.rowOffset));
+    return minA - minB;
+  })) {
+    assignHorizLanesForTubeBundle(
+      bundle,
+      lanes,
+      diagramCenterY,
+      sideSpans,
+      resolvedCenterX,
+      occupied,
+      result,
+    );
+    for (const member of bundle) {
+      processed.add(member.id);
+    }
+  }
+
+  const singles = sortCandidatesByRowOrder(
+    eligible.filter((c) => !processed.has(c.id)),
+  );
+
+  for (const candidate of singles) {
     const lane = lanes.get(candidate.id)!;
     const sourceSign = sideHorizLaneSign(candidate.sourceY, diagramCenterY);
     const targetSign = sideHorizLaneSign(candidate.targetY, diagramCenterY);
     let sourceLane = 0;
     let targetLane = 0;
+    let attempts = 0;
 
     for (;;) {
+      if (attempts++ > 64) break;
       const sourceHorizY =
         candidate.sourceY + sourceSign * sourceLane * SPLICE_LANE_SEP;
       const targetHorizY =
@@ -1291,6 +2285,8 @@ function assignSideHorizLaneYs(
         lane,
         sourceHorizY,
         targetHorizY,
+        sideSpans,
+        resolvedCenterX,
       );
       if (!horizSegmentsOverlapOccupied(segments, occupied)) {
         occupied.push(...segments);
@@ -1313,20 +2309,22 @@ function assignSideHorizLaneYs(
         break;
       }
 
-      const sourceSegs = sourceHorizSegments(
+      const sourceSegs = sourceGapHorizSegments(
         candidate.sourceX,
         lane.midX,
         lane.jogX,
         sourceHorizY,
+        sideSpans,
+        resolvedCenterX,
       );
-      const targetSegs = [
-        {
-          kind: "h" as const,
-          y: targetHorizY,
-          x0: lane.midX,
-          x1: candidate.targetX,
-        },
-      ];
+      const targetSegs = targetGapHorizSegments(
+        candidate.targetX,
+        candidate.targetY,
+        lane.midX,
+        targetHorizY,
+        sideSpans,
+        resolvedCenterX,
+      );
       const sourceConflict = horizSegmentsOverlapOccupied(sourceSegs, occupied);
       const targetConflict = horizSegmentsOverlapOccupied(targetSegs, occupied);
       if (sourceConflict) sourceLane += 1;
@@ -1335,6 +2333,19 @@ function assignSideHorizLaneYs(
         sourceLane += 1;
         targetLane += 1;
       }
+    }
+
+    if (attempts > 64) {
+      occupied.push(
+        ...horizontalSegmentsForLane(
+          candidate,
+          lane,
+          candidate.sourceY,
+          candidate.targetY,
+          sideSpans,
+          resolvedCenterX,
+        ),
+      );
     }
   }
 
@@ -1349,6 +2360,10 @@ function hvDemarcatedSegments(
   midX: number,
   jogX?: number,
   sideHoriz?: Pick<SpliceRoutingLane, "sourceHorizY" | "targetHorizY">,
+  sideSpans: SideCircuitLabelSpan = defaultSideCircuitLabelSpan(),
+  diagramCenterX = (sourceX + targetX) / 2,
+  sourceTagWidth = 0,
+  targetTagWidth = 0,
 ): OrthogonalSegment[] {
   const spliceY = (sourceY + targetY) / 2;
   const srcHY = sideHoriz?.sourceHorizY ?? sourceY;
@@ -1356,22 +2371,62 @@ function hvDemarcatedSegments(
   const trunkX = jogX ?? midX;
   const usesBundleJog =
     jogX !== undefined && Math.abs(trunkX - midX) > SPLICE_PATH_EPS;
-  const segments: OrthogonalSegment[] = [];
-  if (Math.abs(srcHY - sourceY) > SPLICE_PATH_EPS) {
-    segments.push({ kind: "v", x: sourceX, y0: sourceY, y1: srcHY });
+  const sourceClearX = inwardClearXBeforeVertical(
+    sourceX,
+    midX,
+    diagramCenterX,
+    sideSpans,
+    sourceTagWidth,
+  );
+  const targetClearX = targetClearXBeforeVertical(
+    targetX,
+    midX,
+    diagramCenterX,
+    sideSpans,
+    targetTagWidth,
+  );
+  const sourceOffsetY = Math.abs(srcHY - sourceY) > SPLICE_PATH_EPS;
+  const targetOffsetY = Math.abs(tgtHY - targetY) > SPLICE_PATH_EPS;
+  const segments: OrthogonalSegment[] = [
+    { kind: "h", y: sourceY, x0: sourceX, x1: sourceClearX },
+  ];
+
+  if (sourceOffsetY) {
+    segments.push({ kind: "v", x: sourceClearX, y0: sourceY, y1: srcHY });
+    if (usesBundleJog) {
+      segments.push(
+        { kind: "h", y: srcHY, x0: sourceClearX, x1: trunkX },
+        { kind: "h", y: srcHY, x0: trunkX, x1: midX },
+      );
+    } else if (Math.abs(midX - sourceClearX) > SPLICE_PATH_EPS) {
+      segments.push({ kind: "h", y: srcHY, x0: sourceClearX, x1: midX });
+    }
+  } else if (usesBundleJog) {
+    if (Math.abs(trunkX - sourceClearX) > SPLICE_PATH_EPS) {
+      segments.push({ kind: "h", y: sourceY, x0: sourceClearX, x1: trunkX });
+    }
+    if (Math.abs(midX - trunkX) > SPLICE_PATH_EPS) {
+      segments.push({ kind: "h", y: sourceY, x0: trunkX, x1: midX });
+    }
+  } else if (Math.abs(midX - sourceClearX) > SPLICE_PATH_EPS) {
+    segments.push({ kind: "h", y: sourceY, x0: sourceClearX, x1: midX });
   }
-  segments.push({ kind: "h", y: srcHY, x0: sourceX, x1: trunkX });
-  if (usesBundleJog) {
-    segments.push({ kind: "h", y: srcHY, x0: trunkX, x1: midX });
-  }
+
   segments.push(
     { kind: "v", x: midX, y0: srcHY, y1: spliceY },
     { kind: "v", x: midX, y0: spliceY, y1: tgtHY },
-    { kind: "h", y: tgtHY, x0: midX, x1: targetX },
   );
-  if (Math.abs(tgtHY - targetY) > SPLICE_PATH_EPS) {
-    segments.push({ kind: "v", x: targetX, y0: tgtHY, y1: targetY });
+
+  if (targetOffsetY) {
+    segments.push(
+      { kind: "h", y: tgtHY, x0: midX, x1: targetClearX },
+      { kind: "v", x: targetClearX, y0: tgtHY, y1: targetY },
+      { kind: "h", y: targetY, x0: targetClearX, x1: targetX },
+    );
+  } else {
+    segments.push({ kind: "h", y: tgtHY, x0: midX, x1: targetX });
   }
+
   return segments;
 }
 
@@ -1384,6 +2439,10 @@ export function spliceRouteSegments(
   midX: number,
   jogX?: number,
   sideHoriz?: Pick<SpliceRoutingLane, "sourceHorizY" | "targetHorizY">,
+  sideSpans: SideCircuitLabelSpan = defaultSideCircuitLabelSpan(),
+  diagramCenterX = (sourceX + targetX) / 2,
+  sourceTagWidth = 0,
+  targetTagWidth = 0,
 ): OrthogonalSegment[] {
   const template = pickSpliceRouteTemplate(sourceX, sourceY, targetX, targetY);
   if (template === "straight") {
@@ -1401,7 +2460,49 @@ export function spliceRouteSegments(
     midX,
     jogX,
     sideHoriz,
+    sideSpans,
+    diagramCenterX,
+    sourceTagWidth,
+    targetTagWidth,
   );
+}
+
+/** True when rendered splice paths never turn vertical at handle X (EDGE-009). */
+export function splicePathsAvoidHandleColumnVertical(
+  sourceX: number,
+  sourceY: number,
+  targetX: number,
+  targetY: number,
+  midX: number,
+  jogX?: number,
+  sideHoriz?: Pick<SpliceRoutingLane, "sourceHorizY" | "targetHorizY">,
+  sideSpans: SideCircuitLabelSpan = defaultSideCircuitLabelSpan(),
+  diagramCenterX = (sourceX + targetX) / 2,
+  sourceTagWidth = 0,
+  targetTagWidth = 0,
+): boolean {
+  const template = pickSpliceRouteTemplate(sourceX, sourceY, targetX, targetY);
+  if (template === "straight") return true;
+
+  const segs = spliceRouteSegments(
+    sourceX,
+    sourceY,
+    targetX,
+    targetY,
+    midX,
+    jogX,
+    sideHoriz,
+    sideSpans,
+    diagramCenterX,
+    sourceTagWidth,
+    targetTagWidth,
+  );
+  for (const seg of segs) {
+    if (seg.kind !== "v") continue;
+    if (Math.abs(seg.x - sourceX) <= SPLICE_PATH_EPS) return false;
+    if (Math.abs(seg.x - targetX) <= SPLICE_PATH_EPS) return false;
+  }
+  return true;
 }
 
 function segmentInterval(lo: number, hi: number): { lo: number; hi: number } {
@@ -1565,8 +2666,49 @@ function removeEntry(id: string) {
   scheduleNotify();
 }
 
+let activeDragCableNodeId: string | null = null;
+
+/** Limit live lane registry to one cable while the user drags it. */
+export function setActiveDragCableNodeId(nodeId: string | null): void {
+  activeDragCableNodeId = nodeId;
+  if (nodeId === null) {
+    registry.entries.clear();
+    registry.signature = "";
+    notifySubscribers();
+  }
+}
+
+export function getActiveDragCableNodeId(): string | null {
+  return activeDragCableNodeId;
+}
+
+function routingMidXForRender(
+  midX: number,
+  sourceX: number,
+  targetX: number,
+  diagramCenterX: number,
+  sideSpans: SideCircuitLabelSpan,
+  sourceTagWidth = 0,
+  targetTagWidth = 0,
+): number {
+  return enforceMinHorizontalInset(
+    midX,
+    sourceX,
+    targetX,
+    diagramCenterX,
+    sideSpans,
+    MIN_SPLICE_HORIZONTAL_INSET,
+    sourceTagWidth,
+    targetTagWidth,
+    true,
+    true,
+  );
+}
+
 export function useRoutingLaneIndex(
   edgeId: string,
+  sourceNodeId: string,
+  targetNodeId: string,
   sourceX: number,
   sourceY: number,
   targetX: number,
@@ -1577,6 +2719,10 @@ export function useRoutingLaneIndex(
   rowOffset?: number,
   sideCircuitSpan?: SideCircuitLabelSpan,
   tubeBundleKey?: string,
+  storedLane?: SpliceRoutingLane,
+  sourceTagWidth = 0,
+  targetTagWidth = 0,
+  diagramCenterX?: number,
 ): {
   routingLane: number;
   activeLaneCount: number;
@@ -1587,36 +2733,50 @@ export function useRoutingLaneIndex(
   targetHorizY?: number;
 } {
   const [, bump] = useReducer((n: number) => n + 1, 0);
+  const dragCableNodeId = activeDragCableNodeId;
+  const isDragAffected =
+    dragCableNodeId !== null &&
+    (sourceNodeId === dragCableNodeId || targetNodeId === dragCableNodeId);
+  const useLiveRegistry = enabled && isDragAffected;
 
   useLayoutEffect(() => {
-    if (!enabled) return;
+    if (!useLiveRegistry) return;
     const sub = () => bump();
     registry.subscribers.add(sub);
-    // Initial import: RAF may have fired before any edge subscribed.
     flushNotify();
     return () => {
       registry.subscribers.delete(sub);
       removeEntry(edgeId);
     };
-  }, [edgeId, bump, enabled]);
+  }, [edgeId, bump, useLiveRegistry]);
 
   useEffect(() => {
-    if (enabled) return;
+    if (useLiveRegistry) return;
     removeEntry(edgeId);
-  }, [edgeId, enabled]);
+  }, [edgeId, useLiveRegistry]);
+
+  const sideSpans = sideCircuitSpan ?? defaultSideCircuitLabelSpan();
+  const maxRowOffset = Math.max(0, rowOffset ?? 0);
+  const resolvedCenterX =
+    diagramCenterX ?? (sourceX + targetX) / 2;
 
   if (!enabled) {
-    const maxRowOffset = Math.max(0, rowOffset ?? 0);
-    const sideSpans = sideCircuitSpan ?? defaultSideCircuitLabelSpan();
-    const diagramCenterX = (sourceX + targetX) / 2;
-    const midX = resolveSpliceMidX(sourceX, sourceY, targetX, targetY, {
-      rowOffset,
-      maxRowOffset,
-      routingLane: fallbackLane,
-      laneCount: Math.max(1, laneCountHint),
-      diagramCenterX,
-      sideCircuitSpan: sideSpans,
-    });
+    const midX = routingMidXForRender(
+      resolveSpliceMidX(sourceX, sourceY, targetX, targetY, {
+        rowOffset,
+        maxRowOffset,
+        routingLane: fallbackLane,
+        laneCount: Math.max(1, laneCountHint),
+        diagramCenterX: resolvedCenterX,
+        sideCircuitSpan: sideSpans,
+      }),
+      sourceX,
+      targetX,
+      resolvedCenterX,
+      sideSpans,
+      sourceTagWidth,
+      targetTagWidth,
+    );
     return {
       routingLane: fallbackLane,
       activeLaneCount: Math.max(1, laneCountHint),
@@ -1625,11 +2785,34 @@ export function useRoutingLaneIndex(
     };
   }
 
+  if (!isDragAffected && storedLane) {
+    const midX = routingMidXForRender(
+      storedLane.midX,
+      sourceX,
+      targetX,
+      resolvedCenterX,
+      sideSpans,
+      sourceTagWidth,
+      targetTagWidth,
+    );
+    return {
+      routingLane: fallbackLane,
+      activeLaneCount: Math.max(1, laneCountHint),
+      maxRowOffset,
+      midX,
+      jogX: storedLane.jogX,
+      sourceHorizY: storedLane.sourceHorizY,
+      targetHorizY: storedLane.targetHorizY,
+    };
+  }
+
   const template = pickSpliceRouteTemplate(sourceX, sourceY, targetX, targetY);
   const laneStagger = templateUsesMidXLanes(template);
 
   publishEntry({
     id: edgeId,
+    sourceNodeId,
+    targetNodeId,
     sourceX,
     sourceY,
     targetX,
@@ -1641,7 +2824,7 @@ export function useRoutingLaneIndex(
 
   const entries = [...registry.entries.values()];
   const activeLaneCount = Math.max(laneCountHint, entries.length, 1);
-  const maxRowOffset = Math.max(
+  const scopedMaxRowOffset = Math.max(
     0,
     ...entries.map((e) => e.rowOffset ?? 0),
   );
@@ -1649,8 +2832,7 @@ export function useRoutingLaneIndex(
     ? routingLaneFromEntries(entries, edgeId)
     : fallbackLane;
   const entry = entries.find((e) => e.id === edgeId);
-  const sideSpans = sideCircuitSpan ?? defaultSideCircuitLabelSpan();
-  const diagramCenterX =
+  const scopedCenterX =
     entries.length > 0
       ? globalDiagramCenterX(
           entries.map((entry) => ({
@@ -1662,7 +2844,7 @@ export function useRoutingLaneIndex(
             rowOffset: entry.rowOffset ?? entry.fallbackLane,
           })),
         )
-      : (sourceX + targetX) / 2;
+      : resolvedCenterX;
 
   const midXLaneCandidates: MidXLaneCandidate[] = entries
     .filter(
@@ -1687,21 +2869,28 @@ export function useRoutingLaneIndex(
     }));
   const packedRouting = assignSpliceRoutingLanes(midXLaneCandidates, sideSpans);
   const routing = packedRouting.get(edgeId);
-  const midX =
+  const midX = routingMidXForRender(
     routing?.midX ??
-    resolveSpliceMidX(sourceX, sourceY, targetX, targetY, {
-      rowOffset: entry?.rowOffset ?? rowOffset,
-      maxRowOffset,
-      routingLane,
-      laneCount: activeLaneCount,
-      diagramCenterX,
-      sideCircuitSpan: sideSpans,
-    });
+      resolveSpliceMidX(sourceX, sourceY, targetX, targetY, {
+        rowOffset: entry?.rowOffset ?? rowOffset,
+        maxRowOffset: scopedMaxRowOffset,
+        routingLane,
+        laneCount: activeLaneCount,
+        diagramCenterX: scopedCenterX,
+        sideCircuitSpan: sideSpans,
+      }),
+    sourceX,
+    targetX,
+    resolvedCenterX,
+    sideSpans,
+    sourceTagWidth,
+    targetTagWidth,
+  );
 
   return {
     routingLane,
     activeLaneCount,
-    maxRowOffset,
+    maxRowOffset: scopedMaxRowOffset,
     midX,
     jogX: routing?.jogX,
     sourceHorizY: routing?.sourceHorizY,
@@ -1716,6 +2905,7 @@ export function fiberHandlePosition(
   nodePosition: { x: number; y: number },
   scale = 1,
   alignedStemX?: number,
+  circuitName?: string,
 ): { x: number; y: number } {
   const geo = computeCableBreakout(
     vc.tubes,
@@ -1726,17 +2916,25 @@ export function fiberHandlePosition(
     scale,
     alignedStemX,
   );
+  const fiber = vc.tubes
+    .flatMap((t) => t.fibers)
+    .find((f) => f.connectionId === connectionId);
+  const tagCircuit = circuitName ?? fiber?.circuitName;
+  const outset = fiber
+    ? spliceHandleOutsetFromStem(tagCircuit)
+    : SPLICE_HANDLE_OVERHANG;
   return {
     x:
       vc.side === "left"
-        ? nodePosition.x + geo.stemX
-        : nodePosition.x + geo.viewWidth - geo.stemX,
+        ? nodePosition.x + geo.stemX + outset
+        : nodePosition.x + geo.viewWidth - geo.stemX - outset,
     y: nodePosition.y + fiberRowOffsetInCable(vc, connectionId),
   };
 }
 
 /** @internal test helper */
 export function resetSpliceRouteRegistryForTests(): void {
+  activeDragCableNodeId = null;
   registry.entries.clear();
   registry.signature = "";
   registry.subscribers.clear();

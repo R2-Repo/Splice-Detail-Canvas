@@ -13,6 +13,8 @@ import {
   activeSpliceLaneCount,
   applyLayoutOverrides,
   importLayoutWidthForGraph,
+  layoutWidthForViewport,
+  minLayoutWidthForGraph,
 } from "@/features/diagram/layoutSpliceDiagram";
 import { computeCanvasPlacement } from "@/features/diagram/canvasPlacement";
 import {
@@ -145,6 +147,49 @@ describe("importLayoutWidthForGraph", () => {
     const expanded = importLayoutWidthForGraph(graph, { collapse: false });
     const collapsed = importLayoutWidthForGraph(graph, { collapse: true });
     expect(collapsed).toBe(expanded);
+  });
+
+  it("fills viewport width when stage is wider than content minimum", () => {
+    const csv = readFileSync(
+      join(examples, "CSV Splice Detail Example #2.csv"),
+      "utf8",
+    );
+    const graph = buildConnectionGraph(parseBentleyCsv(csv));
+    const minWidth = minLayoutWidthForGraph(graph);
+    const stageWidth = minWidth + 480;
+
+    expect(importLayoutWidthForGraph(graph, { stageWidth })).toBe(stageWidth);
+  });
+
+  it("content minimum wins when stage is narrower than routing needs", () => {
+    const csv = readFileSync(
+      join(examples, "CSV Splice Detail Example #2.csv"),
+      "utf8",
+    );
+    const graph = buildConnectionGraph(parseBentleyCsv(csv));
+    const minWidth = minLayoutWidthForGraph(graph);
+
+    expect(importLayoutWidthForGraph(graph, { stageWidth: 400 })).toBe(
+      minWidth,
+    );
+  });
+
+  it("layoutWidthForViewport preserves user outward drag expansion", () => {
+    const csv = readFileSync(
+      join(examples, "CSV Splice Detail Example #2.csv"),
+      "utf8",
+    );
+    const graph = buildConnectionGraph(parseBentleyCsv(csv));
+    const minWidth = minLayoutWidthForGraph(graph);
+    const stageWidth = minWidth + 200;
+    const userExpanded = stageWidth + 600;
+
+    expect(
+      layoutWidthForViewport(graph, stageWidth, userExpanded),
+    ).toBe(userExpanded);
+    expect(
+      layoutWidthForViewport(graph, stageWidth, minWidth),
+    ).toBe(stageWidth);
   });
 
   it("applyLayoutOverrides refreshColumnX keeps saved Y only", () => {

@@ -3,8 +3,10 @@ import { BaseEdge, type EdgeProps } from "@xyflow/react";
 import {
   buildSplicePath,
   defaultSideCircuitLabelSpan,
+  routingLaneFromData,
   useRoutingLaneIndex,
 } from "@/features/canvas/edges/spliceEdgeRouting";
+import { formattedCircuitTagWidth } from "@/features/diagram/cableLabels";
 import type { SideCircuitLabelSpan } from "@/features/diagram/cableLabels";
 import {
   FIBER_CONTRAST_OUTLINE,
@@ -28,6 +30,11 @@ type SpliceEdgeData = {
   /** Same source tube + target cable — fibers share one center lane. */
   tubeBundleKey?: string;
   circuitName?: string;
+  diagramCenterX?: number;
+  routingMidX?: number;
+  routingJogX?: number;
+  routingSourceHorizY?: number;
+  routingTargetHorizY?: number;
 };
 
 function SpliceLeg({
@@ -72,6 +79,8 @@ function SpliceLeg({
 
 export function SpliceEdge({
   id,
+  source,
+  target,
   sourceX,
   sourceY,
   targetX,
@@ -82,9 +91,14 @@ export function SpliceEdge({
   const fallbackLane = d.laneOverride ?? d.laneIndex ?? 0;
   const laneCount = Math.max(1, d.laneCount ?? 1);
   const useDynamicLanes = laneCount > 1;
+  const storedLane = routingLaneFromData(d);
+  const sourceTagWidth = formattedCircuitTagWidth(d.circuitName);
+  const targetTagWidth = sourceTagWidth;
 
   const { midX, jogX, sourceHorizY, targetHorizY } = useRoutingLaneIndex(
     id,
+    source,
+    target,
     sourceX,
     sourceY,
     targetX,
@@ -95,6 +109,10 @@ export function SpliceEdge({
     d.rowOffset,
     d.sideCircuitSpan ?? defaultSideCircuitLabelSpan(),
     d.tubeBundleKey,
+    storedLane,
+    sourceTagWidth,
+    targetTagWidth,
+    d.diagramCenterX,
   );
 
   const { leftPath, rightPath, spliceX, spliceY } = buildSplicePath(
@@ -105,6 +123,10 @@ export function SpliceEdge({
     midX,
     jogX,
     { sourceHorizY, targetHorizY },
+    d.sideCircuitSpan ?? defaultSideCircuitLabelSpan(),
+    d.diagramCenterX,
+    sourceTagWidth,
+    targetTagWidth,
   );
 
   const fallback = d.color ?? "#e2e8f0";

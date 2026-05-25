@@ -1,9 +1,12 @@
 import { renderHook } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 
+import { FIBER_ROW_PITCH, MIN_HORIZONTAL_INSET_FLOOR, MIN_SPLICE_HORIZONTAL_INSET, SPLICE_ROUTING_END_MARGIN, fiberRowPrefixWidth } from "@/features/diagram/cableLayoutMetrics";
+
 import {
   assignSpliceMidXLanes,
   assignSpliceRoutingLanes,
+  assignSpliceRoutingLanesFromHandleEntries,
   buildDemarcatedSplicePaths,
   buildOrthogonalSplicePath,
   buildSplicePath,
@@ -11,66 +14,39 @@ import {
   defaultSideCircuitLabelSpan,
   effectiveRoutingLane,
   effectiveSpliceLaneSep,
+  enforceMinHorizontalInset,
   horizontalInsetOkFromHandle,
   hvDemarcatedPathsCross,
+  inwardClearXBeforeVertical,
+  minClearMidXForHandle,
   packMidXLanes,
   pickSpliceRouteTemplate,
   resetSpliceRouteRegistryForTests,
   routingLaneFromEntries,
+  splicePathsAvoidHandleColumnVertical,
+  spliceRouteSegments,
+  targetClearXBeforeVertical,
+  setActiveDragCableNodeId,
   sortSpliceRouteEntries,
+  sourceHorizontalLeg,
   spliceMidX,
   spliceMidXFromRowOffset,
   spliceMidXInsetBounds,
   useRoutingLaneIndex,
 } from "./spliceEdgeRouting";
-import {
-  MIN_SPLICE_HORIZONTAL_INSET,
-  SPLICE_LANE_SEP,
-} from "@/features/diagram/cableLayoutMetrics";
+import { SPLICE_LANE_SEP } from "@/features/diagram/cableLayoutMetrics";
 
 describe("spliceEdgeRouting", () => {
   afterEach(() => {
     resetSpliceRouteRegistryForTests();
   });
 
-  it("syncs staggered lanes after initial mount (no drag required)", () => {
-    function usePair() {
-      const top = useRoutingLaneIndex(
-        "top",
-        100,
-        100,
-        500,
-        400,
-        0,
-        true,
-        2,
-      );
-      const bottom = useRoutingLaneIndex(
-        "bottom",
-        100,
-        140,
-        500,
-        420,
-        1,
-        true,
-        2,
-      );
-      return { top, bottom };
-    }
-
-    const { result } = renderHook(() => usePair());
-
-    expect(result.current.top.routingLane).toBe(1);
-    expect(result.current.bottom.routingLane).toBe(0);
-    expect(spliceMidX(100, 500, result.current.top.routingLane, 2)).not.toBe(
-      spliceMidX(100, 500, result.current.bottom.routingLane, 2),
-    );
-  });
-
-  it("inverts lanes when target is below source (right cable lower)", () => {
-    const entries = [
+  it("assigns distinct import routing lanes for a pair of edges", () => {
+    const lanes = assignSpliceRoutingLanesFromHandleEntries([
       {
         id: "top",
+        sourceNodeId: "cable-left",
+        targetNodeId: "cable-right",
         sourceX: 100,
         sourceY: 100,
         targetX: 500,
@@ -79,6 +55,123 @@ describe("spliceEdgeRouting", () => {
       },
       {
         id: "bottom",
+        sourceNodeId: "cable-left",
+        targetNodeId: "cable-right",
+        sourceX: 100,
+        sourceY: 140,
+        targetX: 500,
+        targetY: 420,
+        fallbackLane: 1,
+      },
+    ]);
+    const top = lanes.get("top")!;
+    const bottom = lanes.get("bottom")!;
+    expect(top.midX).not.toBe(bottom.midX);
+  });
+
+  it("live-reroutes only edges on the dragged cable; others use stored lanes", () => {
+    setActiveDragCableNodeId("cable-left");
+    const sideSpans = defaultSideCircuitLabelSpan();
+    const storedMidX = minClearMidXForHandle(100, 300, sideSpans) + 24;
+    const storedOther = {
+      midX: storedMidX,
+      jogX: 0,
+      sourceHorizY: 50,
+      targetHorizY: 60,
+      routingLane: 0,
+    };
+
+    function usePair() {
+      const dragged = useRoutingLaneIndex(
+        "edge-a",
+        "cable-left",
+        "cable-right",
+        100,
+        100,
+        500,
+        400,
+        0,
+        true,
+        2,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+      );
+      const other = useRoutingLaneIndex(
+        "edge-b",
+        "cable-other-left",
+        "cable-other-right",
+        100,
+        100,
+        500,
+        400,
+        0,
+        true,
+        2,
+        undefined,
+        sideSpans,
+        undefined,
+        storedOther,
+      );
+      return { dragged, other };
+    }
+
+    const { result } = renderHook(() => usePair());
+    expect(result.current.other.midX).toBe(storedMidX);
+    expect(result.current.other.sourceHorizY).toBe(50);
+    expect(result.current.dragged.midX).not.toBe(storedMidX);
+  });
+
+  it("re-enforces stored midX at render when it falls inside the label column", () => {
+    setActiveDragCableNodeId(null);
+    const sideSpans = defaultSideCircuitLabelSpan();
+    const storedOther = {
+      midX: 200,
+      routingLane: 0,
+    };
+    const { result } = renderHook(() =>
+      useRoutingLaneIndex(
+        "edge-b",
+        "cable-left",
+        "cable-right",
+        250,
+        100,
+        600,
+        400,
+        0,
+        true,
+        2,
+        undefined,
+        sideSpans,
+        undefined,
+        storedOther,
+        0,
+        0,
+      ),
+    );
+    expect(result.current.midX).toBeGreaterThanOrEqual(
+      minClearMidXForHandle(250, 425, sideSpans, 0, MIN_SPLICE_HORIZONTAL_INSET, true),
+    );
+    expect(result.current.midX).toBeGreaterThan(200);
+  });
+
+  it("inverts lanes when target is below source (right cable lower)", () => {
+    const entries = [
+      {
+        id: "top",
+        sourceNodeId: "a",
+        targetNodeId: "b",
+        sourceX: 100,
+        sourceY: 100,
+        targetX: 500,
+        targetY: 400,
+        fallbackLane: 0,
+      },
+      {
+        id: "bottom",
+        sourceNodeId: "a",
+        targetNodeId: "b",
         sourceX: 100,
         sourceY: 140,
         targetX: 500,
@@ -94,6 +187,8 @@ describe("spliceEdgeRouting", () => {
     const entries = [
       {
         id: "low",
+        sourceNodeId: "a",
+        targetNodeId: "b",
         sourceX: 100,
         sourceY: 200,
         targetX: 500,
@@ -102,6 +197,8 @@ describe("spliceEdgeRouting", () => {
       },
       {
         id: "high",
+        sourceNodeId: "a",
+        targetNodeId: "b",
         sourceX: 100,
         sourceY: 240,
         targetX: 500,
@@ -117,6 +214,8 @@ describe("spliceEdgeRouting", () => {
     const entries = [
       {
         id: "top",
+        sourceNodeId: "a",
+        targetNodeId: "b",
         sourceX: 900,
         sourceY: 100,
         targetX: 200,
@@ -125,6 +224,8 @@ describe("spliceEdgeRouting", () => {
       },
       {
         id: "bottom",
+        sourceNodeId: "a",
+        targetNodeId: "b",
         sourceX: 900,
         sourceY: 140,
         targetX: 200,
@@ -140,6 +241,8 @@ describe("spliceEdgeRouting", () => {
     const entries = [
       {
         id: "a",
+        sourceNodeId: "s",
+        targetNodeId: "t",
         sourceX: 100,
         sourceY: 120,
         targetX: 500,
@@ -148,6 +251,8 @@ describe("spliceEdgeRouting", () => {
       },
       {
         id: "b",
+        sourceNodeId: "s",
+        targetNodeId: "t",
         sourceX: 100,
         sourceY: 120,
         targetX: 500,
@@ -172,17 +277,150 @@ describe("spliceEdgeRouting", () => {
   });
 
   it("demarcates left and right legs at the fusion dot", () => {
-    const { leftPath, rightPath, spliceX, spliceY } = buildDemarcatedSplicePaths(
-      100,
-      50,
-      500,
-      200,
-      300,
+    const sideSpans = defaultSideCircuitLabelSpan();
+    const sourceX = 100;
+    const targetX = 500;
+    const midX = 300;
+    const diagramCenterX = (sourceX + targetX) / 2;
+    const sourceClearX = inwardClearXBeforeVertical(
+      sourceX,
+      midX,
+      diagramCenterX,
+      sideSpans,
     );
-    expect(leftPath).toBe("M 100,50 L 300,50 L 300,125");
+    const { leftPath, rightPath, spliceX, spliceY } = buildDemarcatedSplicePaths(
+      sourceX,
+      50,
+      targetX,
+      200,
+      midX,
+    );
+    expect(leftPath).toBe(
+      `M ${sourceX},50 L ${sourceClearX},50 L ${midX},50 L ${midX},125`,
+    );
     expect(rightPath).toBe("M 300,125 L 300,200 L 500,200");
     expect(spliceX).toBe(300);
     expect(spliceY).toBe(125);
+  });
+
+  it("runs horizontally inward on the handle row before sourceHorizY offset", () => {
+    const sourceX = 250;
+    const sourceY = 100;
+    const midX = 420;
+    const srcHY = 124;
+    const sideSpans = defaultSideCircuitLabelSpan();
+    const { leftPath } = buildDemarcatedSplicePaths(
+      sourceX,
+      sourceY,
+      900,
+      400,
+      midX,
+      undefined,
+      { sourceHorizY: srcHY },
+      sideSpans,
+      550,
+    );
+    const clearX = inwardClearXBeforeVertical(
+      sourceX,
+      midX,
+      550,
+      sideSpans,
+    );
+    expect(leftPath).toMatch(new RegExp(`^M ${sourceX},${sourceY} L ${clearX},${sourceY}`));
+    expect(leftPath).not.toMatch(new RegExp(`L ${sourceX},${srcHY}`));
+    expect(leftPath).toContain(`L ${clearX},${srcHY}`);
+    expect(leftPath).toContain(`L ${midX},${srcHY}`);
+  });
+
+  it("uses OS span for clearX when side labels are wide", () => {
+    const sideSpans = { left: 220, right: 220 };
+    const sourceX = 250;
+    const midX = 900;
+    const minClear = minClearMidXForHandle(
+      sourceX,
+      550,
+      sideSpans,
+      0,
+      MIN_SPLICE_HORIZONTAL_INSET,
+      true,
+    );
+    const clearX = inwardClearXBeforeVertical(
+      sourceX,
+      midX,
+      550,
+      sideSpans,
+    );
+    expect(clearX).toBeGreaterThan(sourceX + MIN_SPLICE_HORIZONTAL_INSET);
+    expect(clearX).toBeGreaterThanOrEqual(minClear - 0.01);
+    expect(clearX).toBeLessThanOrEqual(midX + 0.01);
+  });
+
+  it("runs horizontally inward on target leg before targetHorizY offset", () => {
+    const targetX = 900;
+    const targetY = 400;
+    const midX = 420;
+    const tgtHY = 376;
+    const sideSpans = defaultSideCircuitLabelSpan();
+    const { rightPath } = buildDemarcatedSplicePaths(
+      250,
+      100,
+      targetX,
+      targetY,
+      midX,
+      undefined,
+      { targetHorizY: tgtHY },
+      sideSpans,
+      550,
+    );
+    const clearX = targetClearXBeforeVertical(
+      targetX,
+      midX,
+      550,
+      sideSpans,
+    );
+    expect(rightPath).toContain(`L ${clearX},${tgtHY}`);
+    expect(rightPath).toContain(`L ${clearX},${targetY}`);
+    expect(rightPath).toContain(`L ${targetX},${targetY}`);
+    expect(rightPath).not.toContain(`L ${targetX},${tgtHY}`);
+  });
+
+  it("spliceRouteSegments match demarcated paths (no vertical at handles)", () => {
+    const sideSpans = { left: 180, right: 180 };
+    const sourceX = 120;
+    const sourceY = 80;
+    const targetX = 880;
+    const targetY = 320;
+    const midX = 500;
+    const sideHoriz = { sourceHorizY: 104, targetHorizY: 296 };
+    expect(
+      splicePathsAvoidHandleColumnVertical(
+        sourceX,
+        sourceY,
+        targetX,
+        targetY,
+        midX,
+        undefined,
+        sideHoriz,
+        sideSpans,
+        500,
+      ),
+    ).toBe(true);
+    const segs = spliceRouteSegments(
+      sourceX,
+      sourceY,
+      targetX,
+      targetY,
+      midX,
+      undefined,
+      sideHoriz,
+      sideSpans,
+      500,
+    );
+    for (const seg of segs) {
+      if (seg.kind !== "v") continue;
+      expect(Math.abs(seg.x - sourceX)).toBeGreaterThan(0.01);
+      expect(Math.abs(seg.x - targetX)).toBeGreaterThan(0.01);
+    }
   });
 
   it("buildSplicePath uses straight template when Y matches (0 bends)", () => {
@@ -194,14 +432,14 @@ describe("spliceEdgeRouting", () => {
 
   it("buildSplicePath uses same_side template for same column (2 bends)", () => {
     const sideSpans = defaultSideCircuitLabelSpan();
-    const midX =
-      200 + sideSpans.left + MIN_SPLICE_HORIZONTAL_INSET;
-    const result = buildSplicePath(200, 100, 200, 400, midX);
+    const handleX = 200;
+    const midX = minClearMidXForHandle(handleX, 350, sideSpans);
+    const result = buildSplicePath(handleX, 100, handleX, 400, midX);
     expect(result.template).toBe("same_side");
     expect(result.bendCount).toBe(2);
     expect(result.leftPath).toContain(`L ${midX},100`);
     expect(
-      horizontalInsetOkFromHandle(midX, 200, 350, sideSpans),
+      horizontalInsetOkFromHandle(midX, handleX, 350, sideSpans),
     ).toBe(true);
   });
 
@@ -213,11 +451,14 @@ describe("spliceEdgeRouting", () => {
 
   it("same-column paths detour toward center after OS column", () => {
     const sideSpans = defaultSideCircuitLabelSpan();
-    const midX = 200 + sideSpans.left + MIN_SPLICE_HORIZONTAL_INSET;
-    const result = buildSplicePath(200, 100, 200, 400, midX);
+    const handleX = 200;
+    const midX = minClearMidXForHandle(handleX, 350, sideSpans);
+    const result = buildSplicePath(handleX, 100, handleX, 400, midX);
     expect(result.template).toBe("same_side");
     expect(result.bendCount).toBe(2);
-    expect(result.leftPath).toMatch(new RegExp(`^M 200,100 L ${midX},100 L ${midX},`));
+    expect(result.leftPath).toMatch(
+      new RegExp(`^M ${handleX},100 L ${midX},100 L ${midX},`),
+    );
   });
 
   it("clampMidXForMinHorizontalInset enforces OS span + jog on cross-side paths", () => {
@@ -246,6 +487,103 @@ describe("spliceEdgeRouting", () => {
     );
     expect(clamped).toBeGreaterThanOrEqual(bounds.lo);
     expect(clamped).toBeLessThanOrEqual(bounds.hi);
+  });
+
+  it("enforceMinHorizontalInset keeps OS clearance when inset band is infeasible", () => {
+    const sourceX = 100;
+    const targetX = 500;
+    const sideSpans = { left: 120, right: 140 };
+    const centerX = 300;
+    const enforced = clampMidXForMinHorizontalInset(
+      116,
+      sourceX,
+      targetX,
+      centerX,
+      sideSpans,
+    );
+    expect(
+      horizontalInsetOkFromHandle(
+        enforced,
+        sourceX,
+        centerX,
+        sideSpans,
+        MIN_HORIZONTAL_INSET_FLOOR,
+      ),
+    ).toBe(true);
+    expect(
+      horizontalInsetOkFromHandle(
+        enforced,
+        targetX,
+        centerX,
+        sideSpans,
+        MIN_HORIZONTAL_INSET_FLOOR,
+      ),
+    ).toBe(true);
+    expect(enforced).toBeGreaterThan(sourceX + sideSpans.left - fiberRowPrefixWidth());
+  });
+
+  it("enforceMinHorizontalInset keeps column clearance when routing margin band is empty", () => {
+    const handleX = 300;
+    const sideSpans = defaultSideCircuitLabelSpan();
+    const centerX = handleX;
+    const enforced = clampMidXForMinHorizontalInset(
+      handleX + MIN_SPLICE_HORIZONTAL_INSET,
+      handleX,
+      handleX,
+      centerX,
+      sideSpans,
+      MIN_SPLICE_HORIZONTAL_INSET,
+      0,
+      0,
+      true,
+      true,
+    );
+    expect(
+      horizontalInsetOkFromHandle(
+        enforced,
+        handleX,
+        centerX,
+        sideSpans,
+        MIN_SPLICE_HORIZONTAL_INSET,
+        0,
+        true,
+      ),
+    ).toBe(true);
+    expect(enforced).toBeGreaterThan(handleX + MIN_SPLICE_HORIZONTAL_INSET - 1);
+  });
+
+  it("regression: infeasible 60px inset band never falls back to routing margin only", () => {
+    const columnX = 300;
+    const centerX = 900;
+    const sideSpans = { left: 220, right: 220 };
+    const badMidX = columnX + SPLICE_ROUTING_END_MARGIN;
+    const enforced = enforceMinHorizontalInset(
+      badMidX,
+      columnX,
+      columnX,
+      centerX,
+      sideSpans,
+      MIN_SPLICE_HORIZONTAL_INSET,
+      0,
+      0,
+      true,
+      true,
+    );
+    expect(enforced).toBeGreaterThan(badMidX + 40);
+    expect(
+      horizontalInsetOkFromHandle(
+        enforced,
+        columnX,
+        centerX,
+        sideSpans,
+        MIN_HORIZONTAL_INSET_FLOOR,
+        0,
+        true,
+      ),
+    ).toBe(true);
+    expect(sourceHorizontalLeg(enforced, columnX)).toBeGreaterThanOrEqual(
+      MIN_HORIZONTAL_INSET_FLOOR - 0.01,
+    );
   });
 
   it("pickSpliceRouteTemplate identifies route shapes", () => {
@@ -451,6 +789,52 @@ describe("spliceEdgeRouting", () => {
         SPLICE_LANE_SEP - 0.01,
       );
     }
+  });
+
+  it("keeps ten-fiber tube bundle midX lanes in row-offset color order", () => {
+    const sourceX = 120;
+    const targetX = 1080;
+    const bundleKey = "vc-left|BL|vc-right";
+    const colors = [
+      "bl",
+      "or",
+      "gr",
+      "br",
+      "sl",
+      "wh",
+      "bk",
+      "rs",
+      "yl",
+      "vi",
+    ];
+    const candidates = colors.map((id, index) => {
+      const sourceY = 100 + index * FIBER_ROW_PITCH;
+      // Simulate misaligned target handles: top fibers bend down, bottom bend up.
+      const targetY = 520 - index * FIBER_ROW_PITCH;
+      return {
+        id,
+        sourceX,
+        sourceY,
+        targetX,
+        targetY,
+        rowOffset: index * FIBER_ROW_PITCH,
+        tubeBundleKey: bundleKey,
+      };
+    });
+
+    const packed = assignSpliceRoutingLanes(candidates);
+    const mids = colors.map((id) => packed.get(id)!.midX);
+
+    for (let i = 1; i < mids.length; i++) {
+      expect(mids[i]! - mids[i - 1]!).toBeGreaterThanOrEqual(
+        SPLICE_LANE_SEP - 0.01,
+      );
+    }
+
+    const trunkXs = colors
+      .map((id) => packed.get(id)!.jogX)
+      .filter((x): x is number => x !== undefined);
+    expect(new Set(trunkXs).size).toBeLessThanOrEqual(1);
   });
 
   it("assignSpliceRoutingLanes spaces tube bundle lanes and shares jogX trunk", () => {

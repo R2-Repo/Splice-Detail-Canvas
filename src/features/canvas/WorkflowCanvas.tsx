@@ -30,8 +30,11 @@ import {
 } from "@/features/diagram/cableDisplaySide";
 import { spliceNodeTypes } from "@/features/canvas/nodeTypes";
 import {
-  fiberHandlePosition,
+  assignSpliceRoutingLanesFromHandleEntries,
+  buildSpliceHandleEntries,
   recomputeRowOffsetsFromHandleYs,
+  routingLaneDataFromLane,
+  setActiveDragCableNodeId,
 } from "@/features/canvas/edges/spliceEdgeRouting";
 import {
   CABLE_LAYOUT,
@@ -42,7 +45,12 @@ import { buildConnectionGraph } from "@/features/diagram/buildConnectionGraph";
 import { buildReactFlowGraph } from "@/features/diagram/buildReactFlowGraph";
 import { detectFullButtSpliceTubes } from "@/features/diagram/fullButtSplice";
 import {
+  boundsFromFlowNodes,
+  viewportForFitWidth,
+} from "@/features/canvas/diagramViewport";
+import {
   importLayoutWidthForGraph,
+  layoutWidthForViewport,
   reportStorageKey,
 } from "@/features/diagram/layoutSpliceDiagram";
 import { estimatedCableNodeWidth } from "@/features/diagram/spliceRowLayout";
@@ -54,11 +62,14 @@ import type { ConnectionGraph } from "@/types/splice";
 const emptyNodes: Node[] = [];
 const emptyEdges: Edge[] = [];
 
-const FIT_VIEW_OPTIONS = {
-  padding: 0.15,
-  duration: 200,
+const FIT_WIDTH_OPTIONS = {
+  paddingRatio: 0.08,
   maxZoom: 1,
+  minZoom: 0.05,
 } as const;
+
+/** Ignore sub-pixel resize noise from React Flow / scrollbar churn. */
+const STAGE_WIDTH_DELTA_PX = 16;
 
 function boundsForOutwardDrag(
   draggedX: number,
@@ -92,7 +103,7 @@ function boundsForOutwardDrag(
 }
 
 function WorkflowCanvasInner() {
-  const { fitView } = useReactFlow();
+  const { getNodesBounds, setViewport } = useReactFlow();
   const nodesInitialized = useNodesInitialized();
   const updateNodeInternals = useUpdateNodeInternals();
   const fitViewRequestRef = useRef(0);
@@ -107,17 +118,72 @@ function WorkflowCanvasInner() {
     rightX: CABLE_LAYOUT.rightX,
   });
   const stageRef = useRef<HTMLDivElement | null>(null);
+  const stageWidthRef = useRef(0);
+  const collapseRef = useRef(false);
+  const applyGraphRef = useRef<
+    (
+      graph: ConnectionGraph,
+      reportKey: string,
+      collapse: boolean,
+      options?: {
+        fitView?: boolean;
+        cableSidesPatch?: Record<string, "left" | "right">;
+        layoutWidth?: number;
+        refreshLayout?: boolean;
+        refreshColumnX?: boolean;
+      },
+    ) => void
+  >(() => {});
   const [meta, setMeta] = useState<string | null>(null);
   const [collapseFullButtSplices, setCollapseFullButtSplices] = useState(false);
+
+  collapseRef.current = collapseFullButtSplices;
+
+  const stageWidthForLayout = useCallback((): number => {
+    return stageRef.current?.clientWidth ?? stageWidthRef.current ?? 0;
+  }, []);
+
+  const resolveLayoutWidth = useCallback(
+    (graph: ConnectionGraph, preserveUserExpansion = true): number => {
+      const stageWidth = stageWidthForLayout();
+      if (stageWidth <= 0) {
+        return importLayoutWidthForGraph(graph);
+      }
+      const viewportWidth = importLayoutWidthForGraph(graph, { stageWidth });
+      if (
+        preserveUserExpansion &&
+        layoutWidthRef.current > viewportWidth + 1
+      ) {
+        return layoutWidthRef.current;
+      }
+      return viewportWidth;
+    },
+    [stageWidthForLayout],
+  );
 
   useEffect(() => {
     const requestId = fitViewRequestRef.current;
     if (requestId === 0 || requestId === fitViewHandledRef.current) return;
     if (!nodesInitialized || nodes.length === 0) return;
 
+    const stage = stageRef.current;
+    if (!stage) return;
+
+    const bounds =
+      getNodesBounds(nodes) ?? boundsFromFlowNodes(nodes);
+    if (!bounds || bounds.width <= 0 || bounds.height <= 0) return;
+
     fitViewHandledRef.current = requestId;
-    fitView(FIT_VIEW_OPTIONS);
-  }, [nodesInitialized, nodes.length, fitView]);
+    const stageWidth = stage.clientWidth;
+    const stageHeight = stage.clientHeight;
+    const viewport = viewportForFitWidth(
+      bounds,
+      stageWidth,
+      stageHeight,
+      FIT_WIDTH_OPTIONS,
+    );
+    void setViewport(viewport, { duration: 200 });
+  }, [nodesInitialized, nodes, getNodesBounds, setViewport]);
 
   type ApplyGraphOptions = {
     fitView?: boolean;
@@ -198,7 +264,9 @@ function WorkflowCanvasInner() {
           }),
         );
       }
-      if (options?.fitView) fitViewRequestRef.current += 1;
+      if (options?.fitView) {
+        fitViewRequestRef.current += 1;
+      }
       requestAnimationFrame(() => {
         for (const node of nextNodes) {
           if (node.type === "cable") updateNodeInternals(node.id);
@@ -206,8 +274,52 @@ function WorkflowCanvasInner() {
       });
       void layout;
     },
-    [setNodes, setEdges, fitView, updateNodeInternals],
+    [setNodes, setEdges, updateNodeInternals],
   );
+
+  applyGraphRef.current = applyGraph;
+
+  useEffect(() => {
+    const stage = stageRef.current;
+    if (!stage) return;
+
+    let raf = 0;
+    const observer = new ResizeObserver((entries) => {
+      const width = Math.round(entries[0]?.contentRect.width ?? 0);
+      if (width <= 0) return;
+
+      const prevStageWidth = stageWidthRef.current;
+      stageWidthRef.current = width;
+      if (Math.abs(width - prevStageWidth) < STAGE_WIDTH_DELTA_PX) return;
+
+      const graph = graphRef.current;
+      const reportKey = reportKeyRef.current;
+      if (!graph || !reportKey) return;
+
+      const nextWidth = layoutWidthForViewport(
+        graph,
+        width,
+        layoutWidthRef.current,
+      );
+      if (Math.abs(nextWidth - layoutWidthRef.current) < 1) return;
+
+      cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(() => {
+        applyGraphRef.current(graph, reportKey, collapseRef.current, {
+          layoutWidth: nextWidth,
+          refreshColumnX: true,
+        });
+      });
+    });
+
+    observer.observe(stage);
+    stageWidthRef.current = Math.round(stage.clientWidth);
+
+    return () => {
+      cancelAnimationFrame(raf);
+      observer.disconnect();
+    };
+  }, []);
 
   const loadFromCsv = useCallback(
     (text: string, fileName: string) => {
@@ -222,10 +334,9 @@ function WorkflowCanvasInner() {
       const collapsed =
         saved?.collapseFullButtSplices ?? detected.length > 0;
       setCollapseFullButtSplices(collapsed);
-      const stageWidth = stageRef.current?.clientWidth ?? 0;
+      stageWidthRef.current = stageWidthForLayout();
       const width = importLayoutWidthForGraph(graph, {
-        collapse: collapsed,
-        stageWidth,
+        stageWidth: stageWidthRef.current,
       });
       applyGraph(graph, reportKey, collapsed, {
         fitView: true,
@@ -238,7 +349,7 @@ function WorkflowCanvasInner() {
         `${title} — ${report.pairs.length} pair(s), ${graph.connections.length} connection(s)`,
       );
     },
-    [applyGraph],
+    [applyGraph, resolveLayoutWidth, stageWidthForLayout],
   );
 
   const toggleFullButtCollapse = useCallback(() => {
@@ -247,11 +358,7 @@ function WorkflowCanvasInner() {
     if (!graph || !reportKey) return;
     setCollapseFullButtSplices((prev) => {
       const next = !prev;
-      const stageWidth = stageRef.current?.clientWidth ?? 0;
-      const width = importLayoutWidthForGraph(graph, {
-        collapse: next,
-        stageWidth,
-      });
+      const width = resolveLayoutWidth(graph);
       applyGraph(graph, reportKey, next, {
         layoutWidth: width,
         refreshColumnX: true,
@@ -259,7 +366,13 @@ function WorkflowCanvasInner() {
       persistLayout(nodes, edges);
       return next;
     });
-  }, [applyGraph, nodes, edges, persistLayout]);
+  }, [applyGraph, nodes, edges, persistLayout, resolveLayoutWidth]);
+
+  const onNodeDragStart: OnNodeDrag<Node> = useCallback((_, node) => {
+    if (node.type === "cable") {
+      setActiveDragCableNodeId(node.id);
+    }
+  }, []);
 
   const onNodeDragStop: OnNodeDrag<Node> = useCallback(
     (_, node) => {
@@ -319,58 +432,34 @@ function WorkflowCanvasInner() {
           const { visualCables } = graph
             ? buildVisualCablesForLayout(graph)
             : { visualCables: [] };
-          const vcByNodeId = new Map(
-            visualCables.map((vc) => [`cable-${vc.id}`, vc]),
+          const handleEntries = buildSpliceHandleEntries(
+            nextNodes,
+            currentEdges,
+            visualCables,
+            { cableNodeId: node.id },
           );
-          const handleEntries = currentEdges
-            .filter((edge) => edge.type === "splice")
-            .map((edge) => {
-              const sourceNode = nextNodes.find((n) => n.id === edge.source);
-              const targetNode = nextNodes.find((n) => n.id === edge.target);
-              const sourceVc = vcByNodeId.get(edge.source ?? "");
-              const targetVc = vcByNodeId.get(edge.target ?? "");
-              if (!sourceNode || !targetNode || !sourceVc || !targetVc) {
-                return null;
-              }
-              const connectionId = edge.id.replace(/^splice-/, "");
-              const sourceScale =
-                (sourceNode.data as CableNodeData).diagramScale ?? 1;
-              const targetScale =
-                (targetNode.data as CableNodeData).diagramScale ?? 1;
-              const sourceAligned = (sourceNode.data as CableNodeData).alignedStemX;
-              const targetAligned = (targetNode.data as CableNodeData).alignedStemX;
-              const sourcePos = fiberHandlePosition(
-                sourceVc,
-                connectionId,
-                sourceNode.position,
-                sourceScale,
-                sourceAligned,
-              );
-              const targetPos = fiberHandlePosition(
-                targetVc,
-                connectionId,
-                targetNode.position,
-                targetScale,
-                targetAligned,
-              );
-              return {
-                id: edge.id,
-                sourceX: sourcePos.x,
-                sourceY: sourcePos.y,
-                targetX: targetPos.x,
-                targetY: targetPos.y,
-              };
-            })
-            .filter((entry): entry is NonNullable<typeof entry> => entry != null);
           const rowOffsets = recomputeRowOffsetsFromHandleYs(handleEntries);
+          const dragRouting =
+            assignSpliceRoutingLanesFromHandleEntries(
+              handleEntries,
+              layoutWidth / 2,
+            );
           const nextEdges = currentEdges.map((edge) => {
+            const touchesDragged =
+              edge.source === node.id || edge.target === node.id;
+            if (!touchesDragged || edge.type !== "splice") {
+              return edge;
+            }
+
             const rowOffset = rowOffsets.get(edge.id);
-            if (rowOffset === undefined) return edge;
+            const lane = dragRouting.get(edge.id);
+            const data = edge.data as Record<string, unknown>;
             return {
               ...edge,
               data: {
-                ...(edge.data as Record<string, unknown>),
-                rowOffset,
+                ...data,
+                ...(rowOffset !== undefined ? { rowOffset } : {}),
+                ...(lane ? routingLaneDataFromLane(lane) : {}),
               },
             };
           });
@@ -382,6 +471,7 @@ function WorkflowCanvasInner() {
               ...(sideChanged ? { cableSides: { [visualId]: newSide } } : {}),
             },
           );
+          setActiveDragCableNodeId(null);
           return nextEdges;
         });
         if (sideChanged) {
@@ -447,8 +537,8 @@ function WorkflowCanvasInner() {
           </button>
         ) : null}
         <span className="workflow-canvas__hint">
-          Drag to reposition; outward widens; past center mirrors; click edge for
-          protect-in-place
+          Drag to reposition; only the moved cable's strands re-route; click edge
+          for protect-in-place
         </span>
         {meta ? <span className="workflow-canvas__meta">{meta}</span> : null}
       </div>
@@ -458,6 +548,7 @@ function WorkflowCanvasInner() {
             nodes={nodes}
             edges={edges}
             onNodesChange={onNodesChange}
+            onNodeDragStart={onNodeDragStart}
             onNodeDrag={onNodeDrag}
             onNodeDragStop={onNodeDragStop}
             onEdgesChange={onEdgesChange}
