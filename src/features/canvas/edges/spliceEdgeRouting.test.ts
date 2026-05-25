@@ -1,7 +1,16 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { renderHook } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { FIBER_ROW_PITCH, MIN_HORIZONTAL_INSET_FLOOR, MIN_SPLICE_HORIZONTAL_INSET, SPLICE_ROUTING_END_MARGIN, fiberRowPrefixWidth } from "@/features/diagram/cableLayoutMetrics";
+import { FIBER_ROW_PITCH, MIN_HORIZONTAL_INSET_FLOOR, MIN_SPLICE_HORIZONTAL_INSET, SPLICE_ROUTING_END_MARGIN, fiberRowPrefixWidth, CABLE_LAYOUT } from "@/features/diagram/cableLayoutMetrics";
+import { buildConnectionGraph } from "@/features/diagram/buildConnectionGraph";
+import { buildReactFlowGraph } from "@/features/diagram/buildReactFlowGraph";
+import { computeCableBreakout } from "@/features/diagram/cableBreakoutGeometry";
+import { TIA_12_COLORS } from "@/features/diagram/colorCode";
+import { buildVisualCablesForLayout } from "@/features/diagram/visualCables";
+import { parseBentleyCsv } from "@/features/import/parseBentleyCsv";
+import type { SplicePair } from "@/types/splice";
 
 import {
   assignSpliceMidXLanes,
@@ -9,6 +18,8 @@ import {
   assignSpliceRoutingLanesFromHandleEntries,
   buildDemarcatedSplicePaths,
   buildOrthogonalSplicePath,
+  buildButtSplicePath,
+  buildSpliceHandleEntries,
   buildSplicePath,
   clampMidXForMinHorizontalInset,
   defaultSideCircuitLabelSpan,
@@ -18,20 +29,24 @@ import {
   horizontalInsetOkFromHandle,
   hvDemarcatedPathsCross,
   inwardClearXBeforeVertical,
+  MAX_SPLICE_BENDS,
   minClearMidXForHandle,
   packMidXLanes,
+  parseTubeHandleId,
   pickSpliceRouteTemplate,
+  resolveButtSpliceMidX,
   resetSpliceRouteRegistryForTests,
+  routingLaneFromData,
   routingLaneFromEntries,
   splicePathsAvoidHandleColumnVertical,
   spliceRouteSegments,
-  targetClearXBeforeVertical,
   setActiveDragCableNodeId,
   sortSpliceRouteEntries,
   sourceHorizontalLeg,
   spliceMidX,
   spliceMidXFromRowOffset,
   spliceMidXInsetBounds,
+  tubeHandlePosition,
   useRoutingLaneIndex,
 } from "./spliceEdgeRouting";
 import { SPLICE_LANE_SEP } from "@/features/diagram/cableLayoutMetrics";
@@ -126,9 +141,8 @@ describe("spliceEdgeRouting", () => {
   it("re-enforces stored midX at render when it falls inside the label column", () => {
     setActiveDragCableNodeId(null);
     const sideSpans = defaultSideCircuitLabelSpan();
-    const storedOther = {
-      midX: 200,
-      routingLane: 0,
+    const storedLane = {
+      midX: 420,
     };
     const { result } = renderHook(() =>
       useRoutingLaneIndex(
@@ -145,15 +159,12 @@ describe("spliceEdgeRouting", () => {
         undefined,
         sideSpans,
         undefined,
-        storedOther,
+        storedLane,
         0,
         0,
       ),
     );
-    expect(result.current.midX).toBeGreaterThanOrEqual(
-      minClearMidXForHandle(250, 425, sideSpans, 0, MIN_SPLICE_HORIZONTAL_INSET, true),
-    );
-    expect(result.current.midX).toBeGreaterThan(200);
+    expect(result.current.midX).toBe(420);
   });
 
   it("inverts lanes when target is below source (right cable lower)", () => {
@@ -278,36 +289,28 @@ describe("spliceEdgeRouting", () => {
 
   it("demarcates left and right legs at the fusion dot", () => {
     const sideSpans = defaultSideCircuitLabelSpan();
-    const sourceX = 100;
-    const targetX = 500;
-    const midX = 300;
-    const diagramCenterX = (sourceX + targetX) / 2;
-    const sourceClearX = inwardClearXBeforeVertical(
-      sourceX,
-      midX,
-      diagramCenterX,
-      sideSpans,
-    );
     const { leftPath, rightPath, spliceX, spliceY } = buildDemarcatedSplicePaths(
-      sourceX,
+      100,
       50,
-      targetX,
+      500,
       200,
-      midX,
+      300,
+      undefined,
+      undefined,
+      sideSpans,
+      300,
     );
-    expect(leftPath).toBe(
-      `M ${sourceX},50 L ${sourceClearX},50 L ${midX},50 L ${midX},125`,
-    );
+    const clearX = inwardClearXBeforeVertical(100, 300, 300, sideSpans);
+    expect(leftPath).toBe(`M 100,50 L ${clearX},50 L 300,50 L 300,125`);
     expect(rightPath).toBe("M 300,125 L 300,200 L 500,200");
     expect(spliceX).toBe(300);
     expect(spliceY).toBe(125);
   });
 
-  it("runs horizontally inward on the handle row before sourceHorizY offset", () => {
+  it("ignores sourceHorizY offset to preserve EDGE-004 two-bend limit", () => {
     const sourceX = 250;
     const sourceY = 100;
     const midX = 420;
-    const srcHY = 124;
     const sideSpans = defaultSideCircuitLabelSpan();
     const { leftPath } = buildDemarcatedSplicePaths(
       sourceX,
@@ -316,7 +319,7 @@ describe("spliceEdgeRouting", () => {
       400,
       midX,
       undefined,
-      { sourceHorizY: srcHY },
+      { sourceHorizY: 124 },
       sideSpans,
       550,
     );
@@ -327,9 +330,8 @@ describe("spliceEdgeRouting", () => {
       sideSpans,
     );
     expect(leftPath).toMatch(new RegExp(`^M ${sourceX},${sourceY} L ${clearX},${sourceY}`));
-    expect(leftPath).not.toMatch(new RegExp(`L ${sourceX},${srcHY}`));
-    expect(leftPath).toContain(`L ${clearX},${srcHY}`);
-    expect(leftPath).toContain(`L ${midX},${srcHY}`);
+    expect(leftPath).toContain(`L ${midX},${sourceY}`);
+    expect(leftPath).not.toContain(",124");
   });
 
   it("uses OS span for clearX when side labels are wide", () => {
@@ -355,11 +357,10 @@ describe("spliceEdgeRouting", () => {
     expect(clearX).toBeLessThanOrEqual(midX + 0.01);
   });
 
-  it("runs horizontally inward on target leg before targetHorizY offset", () => {
+  it("keeps target leg on handle row (ignores targetHorizY offset)", () => {
     const targetX = 900;
     const targetY = 400;
     const midX = 420;
-    const tgtHY = 376;
     const sideSpans = defaultSideCircuitLabelSpan();
     const { rightPath } = buildDemarcatedSplicePaths(
       250,
@@ -368,20 +369,42 @@ describe("spliceEdgeRouting", () => {
       targetY,
       midX,
       undefined,
-      { targetHorizY: tgtHY },
+      { targetHorizY: 376 },
       sideSpans,
       550,
     );
-    const clearX = targetClearXBeforeVertical(
-      targetX,
-      midX,
-      550,
+    expect(rightPath).toBe(`M ${midX},250 L ${midX},${targetY} L ${targetX},${targetY}`);
+    expect(rightPath).not.toContain(",376");
+  });
+
+  it("distinct midX lanes use separate center verticals", () => {
+    const sideSpans = defaultSideCircuitLabelSpan();
+    const midA = 380;
+    const midB = 404;
+    const pathA = buildDemarcatedSplicePaths(
+      250,
+      100,
+      900,
+      400,
+      midA,
+      undefined,
+      undefined,
       sideSpans,
-    );
-    expect(rightPath).toContain(`L ${clearX},${tgtHY}`);
-    expect(rightPath).toContain(`L ${clearX},${targetY}`);
-    expect(rightPath).toContain(`L ${targetX},${targetY}`);
-    expect(rightPath).not.toContain(`L ${targetX},${tgtHY}`);
+      550,
+    ).leftPath;
+    const pathB = buildDemarcatedSplicePaths(
+      250,
+      148,
+      900,
+      448,
+      midB,
+      undefined,
+      undefined,
+      sideSpans,
+      550,
+    ).leftPath;
+    expect(pathA).toContain(`L ${midA},100`);
+    expect(pathB).toContain(`L ${midB},148`);
   });
 
   it("spliceRouteSegments match demarcated paths (no vertical at handles)", () => {
@@ -671,7 +694,7 @@ describe("spliceEdgeRouting", () => {
     ).toBe(false);
   });
 
-  it("detects nested-bend violations when top fiber bends first", () => {
+  it("allows center vertical crossing handle-row lead-in under two-bend routing", () => {
     const sourceX = 100;
     const targetX = 500;
     const topMidX = 200;
@@ -689,7 +712,7 @@ describe("spliceEdgeRouting", () => {
         420,
         bottomMidX,
       ),
-    ).toBe(true);
+    ).toBe(false);
   });
 
   it("effectiveRoutingLane inverts only for downward splices", () => {
@@ -1086,10 +1109,7 @@ describe("spliceEdgeRouting", () => {
     );
   });
 
-  it("deconflicts horizontal tracks across zones (same Y, overlapping X)", () => {
-    // Two zones with strands at the same source/target Y. Source-side H
-    // segments overlap unless target-side or source-side is offset onto a
-    // different lane Y. Global pass must apply a Y offset to one of them.
+  it("assigns distinct midX across zones on same row Y (EDGE-004 two-bend)", () => {
     const candidates = [
       {
         id: "zoneA",
@@ -1111,15 +1131,9 @@ describe("spliceEdgeRouting", () => {
     const lanes = assignSpliceRoutingLanes(candidates);
     const a = lanes.get("zoneA")!;
     const b = lanes.get("zoneB")!;
-    // At least one of them ended up on a different horizontal track.
-    const aSrcY = a.sourceHorizY ?? 200;
-    const bSrcY = b.sourceHorizY ?? 200;
-    const aTgtY = a.targetHorizY ?? 200;
-    const bTgtY = b.targetHorizY ?? 200;
-    expect(
-      Math.abs(aSrcY - bSrcY) >= SPLICE_LANE_SEP - 0.01 ||
-        Math.abs(aTgtY - bTgtY) >= SPLICE_LANE_SEP - 0.01,
-    ).toBe(true);
+    expect(Math.abs(a.midX - b.midX)).toBeGreaterThan(SPLICE_LANE_SEP - 0.01);
+    expect(a.sourceHorizY).toBeUndefined();
+    expect(b.sourceHorizY).toBeUndefined();
   });
 
   it("assignSpliceMidXLanes keeps zones independent", () => {
@@ -1153,5 +1167,174 @@ describe("spliceEdgeRouting", () => {
     expect(lanes.get("b")).toBeDefined();
     expect(lanes.get("c")).toBeDefined();
     expect(Math.abs(lanes.get("a")! - lanes.get("c")!)).toBeGreaterThan(0);
+  });
+});
+
+function syntheticFullButtSpliceGraph() {
+  const pairs: SplicePair[] = TIA_12_COLORS.map((color, index) => ({
+    id: `pair-${index}`,
+    endpointA: {
+      device: "DEV-A",
+      cable: "CABLE-A",
+      fiberNumber: index + 1,
+      tubeColor: "BL",
+      fiberColor: color.abbrev,
+      csvColumn: "from",
+    },
+    endpointB: {
+      device: "DEV-B",
+      cable: "CABLE-B",
+      fiberNumber: index + 1,
+      tubeColor: "OR",
+      fiberColor: color.abbrev,
+      csvColumn: "to",
+    },
+  }));
+
+  return buildConnectionGraph({
+    header: {},
+    pairs,
+    cableAppearances: [
+      {
+        device: "DEV-A",
+        cable: "CABLE-A",
+        left: { from: 12, to: 0 },
+        right: { from: 0, to: 0 },
+      },
+      {
+        device: "DEV-B",
+        cable: "CABLE-B",
+        left: { from: 0, to: 0 },
+        right: { from: 0, to: 12 },
+      },
+    ],
+  });
+}
+
+describe("collapsed full butt splice tube routing", () => {
+  afterEach(() => {
+    resetSpliceRouteRegistryForTests();
+  });
+
+  it("parseTubeHandleId parses striped tube handles", () => {
+    expect(parseTubeHandleId("tube-CABLE-A::from|BL-BK-out")).toEqual({
+      legId: "CABLE-A::from",
+      tubeColor: "BL-BK",
+    });
+  });
+
+  it("tubeHandlePosition Y matches breakout tube.end.y", () => {
+    const graph = syntheticFullButtSpliceGraph();
+    const { visualCables } = buildVisualCablesForLayout(graph);
+    const leftVc = visualCables.find((vc) => vc.side === "left")!;
+    const geo = computeCableBreakout(
+      leftVc.tubes,
+      leftVc.side,
+      FIBER_ROW_PITCH,
+      CABLE_LAYOUT.headerH,
+      CABLE_LAYOUT.tubeLabelH,
+    );
+    const tube = geo.tubes.find((t) => t.tubeColor === "BL")!;
+    const pos = tubeHandlePosition(leftVc, "BL", { x: 0, y: 100 });
+    expect(pos.y).toBeCloseTo(100 + tube.end.y, 5);
+    expect(pos.y).toBeGreaterThan(100 + CABLE_LAYOUT.headerH);
+  });
+
+  it("buildSpliceHandleEntries resolves butt edges at tube center Y", () => {
+    const graph = syntheticFullButtSpliceGraph();
+    const { nodes, edges } = buildReactFlowGraph(graph, {
+      reportKey: "test",
+      positions: {},
+      collapseFullButtSplices: true,
+    });
+    const { visualCables } = buildVisualCablesForLayout(graph);
+    const entries = buildSpliceHandleEntries(nodes, edges, visualCables);
+    const butt = entries.find((e) => e.id.startsWith("butt-"));
+    expect(butt).toBeDefined();
+    expect(butt!.fullButtSplice).toBe(true);
+    expect(butt!.sourceY).toBeGreaterThan(CABLE_LAYOUT.headerH);
+    expect(butt!.targetY).toBeGreaterThan(CABLE_LAYOUT.headerH);
+  });
+
+  it("cross-side butt path keeps the target leg horizontal at targetY", () => {
+    const sideSpans = defaultSideCircuitLabelSpan();
+    const verticalX = resolveButtSpliceMidX(100, 500, 300, sideSpans);
+    const result = buildButtSplicePath(100, 50, 500, 200, 999, sideSpans, 300);
+    expect(result.rightPath).toBe(`M ${verticalX},200 L 500,200`);
+    expect(result.spliceX).toBe(verticalX);
+    expect(result.bendCount).toBeLessThanOrEqual(MAX_SPLICE_BENDS);
+  });
+
+  it("uses straight template when tube Y aligns within half pitch", () => {
+    const result = buildButtSplicePath(100, 50, 500, 60, 300);
+    expect(result.template).toBe("straight");
+    expect(result.bendCount).toBe(0);
+  });
+
+  it("collapsed tube import routing uses at most two bends and no Y-track offsets", () => {
+    const graph = syntheticFullButtSpliceGraph();
+    const { nodes, edges } = buildReactFlowGraph(graph, {
+      reportKey: "test",
+      positions: {},
+      collapseFullButtSplices: true,
+    });
+    const buttEdge = edges.find((e) => e.id.startsWith("butt-"));
+    expect(buttEdge).toBeDefined();
+    const lane = routingLaneFromData(buttEdge!.data as Record<string, unknown>);
+    expect(lane?.sourceHorizY).toBeUndefined();
+    expect(lane?.targetHorizY).toBeUndefined();
+    expect(lane?.jogX).toBeUndefined();
+
+    const { visualCables } = buildVisualCablesForLayout(graph);
+    const [entry] = buildSpliceHandleEntries(nodes, edges, visualCables).filter(
+      (e) => e.id === buttEdge!.id,
+    );
+    const { bendCount } = buildButtSplicePath(
+      entry!.sourceX,
+      entry!.sourceY,
+      entry!.targetX,
+      entry!.targetY,
+      lane!.midX,
+    );
+    expect(bendCount).toBeLessThanOrEqual(MAX_SPLICE_BENDS);
+  });
+
+  it("300N_MAIN collapsed tubes keep midX between handle columns", () => {
+    const graph = buildConnectionGraph(
+      parseBentleyCsv(
+        readFileSync(
+          join(process.cwd(), "docs/reference/examples/300N_MAIN.csv"),
+          "utf8",
+        ),
+      ),
+    );
+    const { nodes, edges } = buildReactFlowGraph(graph, {
+      reportKey: "test",
+      positions: {},
+      collapseFullButtSplices: true,
+    });
+    const { visualCables } = buildVisualCablesForLayout(graph);
+    const entries = buildSpliceHandleEntries(nodes, edges, visualCables);
+
+    for (const edge of edges.filter((e) => e.id.startsWith("butt-"))) {
+      const entry = entries.find((en) => en.id === edge.id)!;
+      const lane = routingLaneFromData(edge.data as Record<string, unknown>)!;
+      const crossSide =
+        Math.abs(entry.sourceX - entry.targetX) > SPLICE_ROUTING_END_MARGIN;
+      if (crossSide) {
+        const lo = Math.min(entry.sourceX, entry.targetX);
+        const hi = Math.max(entry.sourceX, entry.targetX);
+        expect(lane.midX).toBeGreaterThanOrEqual(lo - 1);
+        expect(lane.midX).toBeLessThanOrEqual(hi + 1);
+      }
+      const result = buildButtSplicePath(
+        entry.sourceX,
+        entry.sourceY,
+        entry.targetX,
+        entry.targetY,
+        lane.midX,
+      );
+      expect(result.bendCount).toBeLessThanOrEqual(MAX_SPLICE_BENDS);
+    }
   });
 });

@@ -64,7 +64,7 @@ describe("computeDiagramScale", () => {
 });
 
 describe("computeCableBreakout", () => {
-  it("single tube exits horizontally from cable center", () => {
+  it("single tube exits horizontally from fiber group center", () => {
     const tubes = [
       mockTube("BL", [
         { rowIndex: 0, handleId: "f0", fiberColor: "BL" },
@@ -73,8 +73,9 @@ describe("computeCableBreakout", () => {
     ];
     const geo = computeCableBreakout(tubes, "left", 40, 56, 18);
     expect(geo.tubes).toHaveLength(1);
-    expect(geo.tubes[0]!.origin.y).toBeCloseTo(geo.cableCenterY, 5);
-    expect(geo.tubes[0]!.origin.x).toBe(geo.sheath.width);
+    const tube = geo.tubes[0]!;
+    expect(tube.origin.y).toBeCloseTo(tube.end.y, 5);
+    expect(tube.origin.x).toBe(geo.sheath.width);
   });
 
   it("scales sheath uniformly with buffer tube count", () => {
@@ -100,17 +101,37 @@ describe("computeCableBreakout", () => {
     );
   });
 
-  it("all tubes attach at cable center", () => {
+  it("multi-tube cables fan from sheath center when groups exceed sheath height", () => {
     const tubes = [
       mockTube("BL", [{ rowIndex: 0, handleId: "f0", fiberColor: "BL" }]),
       mockTube("OR", [{ rowIndex: 6, handleId: "f1", fiberColor: "OR" }]),
     ];
     const geo = computeCableBreakout(tubes, "left", 40, 56, 18);
-    const centerY = geo.cableCenterY;
     for (const tube of geo.tubes) {
-      expect(tube.origin.y).toBeCloseTo(centerY, 5);
+      expect(tube.origin.y).toBeCloseTo(geo.cableCenterY, 5);
+      const rowYs = tube.fibers.map((f) => f.rowY);
+      const fiberCenterY = (Math.min(...rowYs) + Math.max(...rowYs)) / 2;
+      expect(tube.end.y).toBeCloseTo(fiberCenterY, 5);
     }
     expect(geo.tubes[0]!.end.y).not.toBeCloseTo(geo.tubes[1]!.end.y, 0);
+  });
+
+  it("ignores visualShiftY for expanded tube and fan geometry", () => {
+    const tubes = [
+      {
+        ...mockTube("BL", [
+          { rowIndex: 0, rowYOffset: 0, handleId: "f0", fiberColor: "BL" },
+          { rowIndex: 1, rowYOffset: 40, handleId: "f1", fiberColor: "OR" },
+        ]),
+        visualShiftY: 10,
+      },
+    ];
+    const geo = computeCableBreakout(tubes, "left", 40, 56, 18);
+    const tube = geo.tubes[0]!;
+    expect(tube.origin.y).toBeCloseTo(tube.end.y, 5);
+    const rowYs = tube.fibers.map((f) => f.rowY);
+    const fiberCenterY = (Math.min(...rowYs) + Math.max(...rowYs)) / 2;
+    expect(tube.end.y).toBeCloseTo(fiberCenterY, 5);
   });
 
   it("fans each strand from the tube tip to its row at the stem", () => {

@@ -120,14 +120,18 @@ export function CableNode({ id, data }: NodeProps) {
           const striped = isStripedTube(tube.tubeColor);
           const stroke = tubeStroke(tube.tubeColor, striped);
           const tubeBase = tube.tubeColor.split("-")[0] as FiberColorAbbrev;
+          const sourceTube = d.tubes.find((t) => t.tubeColor === tube.tubeColor);
+          const collapsedShiftY = sourceTube?.visualShiftY ?? 0;
+          const collapsedHandleY = tube.end.y + collapsedShiftY;
+          const lineStart = tube.origin;
           const lineEnd = collapsed
-            ? { x: geo.stemX, y: tube.end.y }
+            ? { x: geo.stemX, y: collapsedHandleY }
             : tube.end;
           return (
             <g key={tube.tubeColor}>
               <ContrastSvgLine
-                x1={tube.origin.x}
-                y1={tube.origin.y}
+                x1={lineStart.x}
+                y1={lineStart.y}
                 x2={lineEnd.x}
                 y2={lineEnd.y}
                 stroke={stroke.stroke}
@@ -229,12 +233,15 @@ export function CableNode({ id, data }: NodeProps) {
         {geo.tubes.map((tube) => {
           if (!isTubeCollapsed(tube.tubeColor)) return null;
           const handleBase = tubeHandleId(d.legId, tube.tubeColor);
+          const sourceTube = d.tubes.find((t) => t.tubeColor === tube.tubeColor);
+          const collapsedHandleY =
+            tube.end.y + (sourceTube?.visualShiftY ?? 0);
           return (
             <div
               key={handleBase}
               className="cable-node__fiber-row cable-node__fiber-row--tube"
               style={{
-                top: tube.end.y,
+                top: collapsedHandleY,
                 left: d.side === "left" ? geo.stemX : undefined,
                 right:
                   d.side === "right" ? geo.viewWidth - geo.stemX : undefined,

@@ -131,6 +131,7 @@ function WorkflowCanvasInner() {
         layoutWidth?: number;
         refreshLayout?: boolean;
         refreshColumnX?: boolean;
+        refreshRowLayout?: boolean;
       },
     ) => void
   >(() => {});
@@ -191,6 +192,7 @@ function WorkflowCanvasInner() {
     layoutWidth?: number;
     refreshLayout?: boolean;
     refreshColumnX?: boolean;
+    refreshRowLayout?: boolean;
   };
 
   const persistLayout = useCallback(
@@ -235,7 +237,7 @@ function WorkflowCanvasInner() {
       const savedPositions =
         options?.refreshLayout ?? false ? {} : existing?.positions ?? {};
 
-      const { nodes: nextNodes, edges: nextEdges, layout, xBounds } =
+      const { nodes: nextNodes, edges: nextEdges, layout, xBounds, autoLayoutY } =
         buildReactFlowGraph(
           graph,
           {
@@ -247,17 +249,25 @@ function WorkflowCanvasInner() {
             layoutWidth: layoutWidthArg,
           },
           layoutWidthArg,
-          { refreshColumnX: options?.refreshColumnX },
+          {
+            refreshColumnX: options?.refreshColumnX,
+            refreshRowLayout: options?.refreshRowLayout,
+          },
         );
       xBoundsRef.current = xBounds;
       setNodes(nextNodes);
       setEdges(nextEdges);
 
-      if (options?.refreshColumnX || options?.layoutWidth !== undefined) {
+      if (
+        options?.refreshColumnX ||
+        options?.layoutWidth !== undefined ||
+        options?.refreshRowLayout
+      ) {
         saveLayoutOverrides(
           mergeLayoutOverrides(reportKey, {
             layoutWidth: layoutWidthArg,
             positions: positionsFromNodes(nextNodes),
+            autoLayoutY,
             existingEdgeIds: existing?.existingEdgeIds,
             collapseFullButtSplices: collapse,
             cableSides: overrides.cableSides,
@@ -362,11 +372,11 @@ function WorkflowCanvasInner() {
       applyGraph(graph, reportKey, next, {
         layoutWidth: width,
         refreshColumnX: true,
+        refreshRowLayout: true,
       });
-      persistLayout(nodes, edges);
       return next;
     });
-  }, [applyGraph, nodes, edges, persistLayout, resolveLayoutWidth]);
+  }, [applyGraph, resolveLayoutWidth]);
 
   const onNodeDragStart: OnNodeDrag<Node> = useCallback((_, node) => {
     if (node.type === "cable") {

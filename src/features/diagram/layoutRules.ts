@@ -42,29 +42,44 @@ import {
   endpointOnVisualSide,
   type VisualCable,
 } from "@/features/diagram/visualCables";
-import type { ConnectionGraph, FiberConnection } from "@/types/splice";
+import type { ConnectionGraph, FiberConnection, LayoutOverrides, TubeColorCode } from "@/types/splice";
 import type { CablePlacement } from "@/features/diagram/canvasPlacement";
 import {
   assignSpliceMidXLanes,
   assignSpliceRoutingLanes,
+  buildButtSplicePath,
   buildSplicePath,
   fiberHandlePosition,
   hvDemarcatedPathsCross,
   horizontalInsetOkFromHandle,
+  MAX_SPLICE_BENDS,
   maxSpliceBendsForLane,
+  parseButtTubeEndpointsFromEdgeId,
+  parseTubeHandleId,
+  routingLaneFromData,
+  tubeHandlePosition,
   type MidXLaneCandidate,
   parallelSpliceSegmentsOverlap,
   pickSpliceRouteTemplate,
   resolveSpliceMidX,
+  isSharedSpliceRowLeadInOverlap,
   spliceMidOrderInverts,
   splicePathsAvoidHandleColumnVertical,
   spliceRouteSegments,
   type SpliceRoutingLane,
+  type SpliceRoutingLaneData,
   SPLICE_PATH_EPS,
   spliceRoutingZoneKey,
   templateUsesMidXLanes,
 } from "@/features/canvas/edges/spliceEdgeRouting";
 import { orderedFiberConnections } from "@/features/diagram/buildConnectionGraph";
+import { visualCableIdFromNodeId } from "@/features/diagram/cableDisplaySide";
+import type { CableNodeData } from "@/features/canvas/nodes/types";
+import {
+  cablePositionsFromNodePositions,
+  crossSideTubePairsAligned,
+  type TubeRowShiftOptions,
+} from "@/features/diagram/tubeRowShift";
 
 /** Stable rule IDs — must match docs/agent/LAYOUT_RULES.md */
 export const LAYOUT_RULE_IDS = [
@@ -79,6 +94,7 @@ export const LAYOUT_RULE_IDS = [
   "TUB-005",
   "TUB-006",
   "TUB-007",
+  "TUB-008",
   "CBL-001",
   "CBL-002",
   "CBL-003",
@@ -126,6 +142,11 @@ export const LAYOUT_RULES: LayoutRuleMeta[] = [
   {
     id: "TUB-007",
     title: "Same-side cables align fiber label columns at shared stem X",
+    category: "tube",
+  },
+  {
+    id: "TUB-008",
+    title: "Cross-side tube pairs align tube handle Y after dynamic shift",
     category: "tube",
   },
   { id: "CBL-001", title: "Same-side cables do not overlap", category: "cable" },
@@ -261,14 +282,24 @@ function tubeGeometryOk(
     );
 
     for (const tube of geo.tubes) {
-      if (Math.abs(tube.origin.y - geo.cableCenterY) > Y_TOLERANCE) {
-        return {
-          ok: false,
-          detail: `Cable ${vc.id}: tube ${tube.tubeColor} origin not at center`,
-        };
-      }
       const rowYs = tube.fibers.map((f) => f.rowY);
       const fiberCenterY = (Math.min(...rowYs) + Math.max(...rowYs)) / 2;
+      const horizontal = Math.abs(tube.origin.y - tube.end.y) <= Y_TOLERANCE;
+      const onSheathFace =
+        tube.origin.y >= geo.sheath.y - Y_TOLERANCE &&
+        tube.origin.y <= geo.sheath.y + geo.sheath.height + Y_TOLERANCE;
+      if (horizontal && !onSheathFace) {
+        return {
+          ok: false,
+          detail: `Cable ${vc.id}: tube ${tube.tubeColor} horizontal origin off sheath face`,
+        };
+      }
+      if (!horizontal && Math.abs(tube.origin.y - geo.cableCenterY) > Y_TOLERANCE) {
+        return {
+          ok: false,
+          detail: `Cable ${vc.id}: tube ${tube.tubeColor} angled origin not at center`,
+        };
+      }
       if (Math.abs(tube.end.y - fiberCenterY) > Y_TOLERANCE) {
         return {
           ok: false,
@@ -582,6 +613,67 @@ function spliceHandleEndpoints(
   };
 }
 
+function buttSpliceHandleEndpoints(
+  ctx: LayoutRuleContext,
+  edge: Edge,
+): {
+  sourceX: number;
+  sourceY: number;
+  targetX: number;
+  targetY: number;
+  rowOffset: number;
+} | null {
+  const sourceNode = ctx.reactFlow.nodes.find((n) => n.id === edge.source);
+  const targetNode = ctx.reactFlow.nodes.find((n) => n.id === edge.target);
+  if (!sourceNode || !targetNode) return null;
+
+  const vcByNodeId = new Map(
+    ctx.visualCables.map((vc) => [`cable-${vc.id}`, vc]),
+  );
+  const sourceVc = edge.source ? vcByNodeId.get(edge.source) : undefined;
+  const targetVc = edge.target ? vcByNodeId.get(edge.target) : undefined;
+  if (!sourceVc || !targetVc) return null;
+
+  const sourceTube =
+    parseTubeHandleId(edge.sourceHandle) ??
+    parseButtTubeEndpointsFromEdgeId(edge.id)?.endpointA;
+  const targetTube =
+    parseTubeHandleId(edge.targetHandle) ??
+    parseButtTubeEndpointsFromEdgeId(edge.id)?.endpointB;
+  if (!sourceTube || !targetTube) return null;
+
+  const sourceScale =
+    (sourceNode.data as { diagramScale?: number }).diagramScale ?? 1;
+  const targetScale =
+    (targetNode.data as { diagramScale?: number }).diagramScale ?? 1;
+  const sourceAligned = (sourceNode.data as { alignedStemX?: number }).alignedStemX;
+  const targetAligned = (targetNode.data as { alignedStemX?: number }).alignedStemX;
+
+  const sourcePos = tubeHandlePosition(
+    sourceVc,
+    sourceTube.tubeColor,
+    sourceNode.position,
+    sourceScale,
+    sourceAligned,
+  );
+  const targetPos = tubeHandlePosition(
+    targetVc,
+    targetTube.tubeColor,
+    targetNode.position,
+    targetScale,
+    targetAligned,
+  );
+  const rowOffset = (edge.data as { rowOffset?: number })?.rowOffset ?? 0;
+
+  return {
+    sourceX: sourcePos.x,
+    sourceY: sourcePos.y,
+    targetX: targetPos.x,
+    targetY: targetPos.y,
+    rowOffset,
+  };
+}
+
 function sideCircuitSpanFromCtx(ctx: LayoutRuleContext) {
   for (const edge of ctx.reactFlow.edges) {
     if (edge.type !== "splice") continue;
@@ -735,6 +827,32 @@ function splicePathsWithinBendLimit(ctx: LayoutRuleContext): boolean {
     const maxBends = maxSpliceBendsForLane(sourceY, targetY, lane);
     if (bendCount > maxBends) return false;
   }
+
+  for (const edge of ctx.reactFlow.edges) {
+    if (edge.type !== "splice") continue;
+    const edgeData = edge.data as { fullButtSplice?: boolean };
+    if (!edge.id.startsWith("butt-") && !edgeData.fullButtSplice) continue;
+
+    const endpoints = buttSpliceHandleEndpoints(ctx, edge);
+    if (!endpoints) continue;
+
+    const { sourceX, sourceY, targetX, targetY } = endpoints;
+    const storedLane = routingLaneFromData(edge.data as SpliceRoutingLaneData);
+    if (!storedLane) return false;
+
+    const { midX } = storedLane;
+    const { bendCount } = buildButtSplicePath(
+      sourceX,
+      sourceY,
+      targetX,
+      targetY,
+      midX,
+      sideSpans,
+      ctx.layoutWidth / 2,
+    );
+    if (bendCount > MAX_SPLICE_BENDS) return false;
+  }
+
   return true;
 }
 
@@ -961,6 +1079,8 @@ export function findSpliceOverlapPair(ctx: LayoutRuleContext): string | null {
     jogX?: number;
     sourceHorizY?: number;
     targetHorizY?: number;
+    sourceBendX?: number;
+    targetBendX?: number;
     tubeBundleKey?: string;
   }> = [];
 
@@ -993,6 +1113,8 @@ export function findSpliceOverlapPair(ctx: LayoutRuleContext): string | null {
       jogX: lane.jogX,
       sourceHorizY: lane.sourceHorizY,
       targetHorizY: lane.targetHorizY,
+      sourceBendX: lane.sourceBendX,
+      targetBendX: lane.targetBendX,
       tubeBundleKey,
     });
   }
@@ -1021,7 +1143,12 @@ export function findSpliceOverlapPair(ctx: LayoutRuleContext): string | null {
         a.targetY,
         a.midX,
         a.jogX,
-        { sourceHorizY: a.sourceHorizY, targetHorizY: a.targetHorizY },
+        {
+          sourceHorizY: a.sourceHorizY,
+          targetHorizY: a.targetHorizY,
+          sourceBendX: a.sourceBendX,
+          targetBendX: a.targetBendX,
+        },
       );
       const segsB = spliceRouteSegments(
         b.sourceX,
@@ -1030,10 +1157,27 @@ export function findSpliceOverlapPair(ctx: LayoutRuleContext): string | null {
         b.targetY,
         b.midX,
         b.jogX,
-        { sourceHorizY: b.sourceHorizY, targetHorizY: b.targetHorizY },
+        {
+          sourceHorizY: b.sourceHorizY,
+          targetHorizY: b.targetHorizY,
+          sourceBendX: b.sourceBendX,
+          targetBendX: b.targetBendX,
+        },
       );
       for (const segA of segsA) {
         for (const segB of segsB) {
+          if (
+            isSharedSpliceRowLeadInOverlap(
+              a.sourceY,
+              b.sourceY,
+              a.targetY,
+              b.targetY,
+              segA,
+              segB,
+            )
+          ) {
+            continue;
+          }
           if (parallelSpliceSegmentsOverlap(segA, segB)) {
             return `${a.id} vs ${b.id} :: ${segA.kind}/${segB.kind} mid=${a.midX}/${b.midX}`;
           }
@@ -1308,16 +1452,74 @@ function strandFansTowardCenter(ctx: LayoutRuleContext): boolean {
   return true;
 }
 
+function cablePositionsFromReactFlowNodes(
+  nodes: Node[],
+): Map<string, { x: number; y: number; height: number }> {
+  const positions: Record<string, { x: number; y: number }> = {};
+  for (const node of nodes) {
+    if (node.type !== "cable") continue;
+    positions[node.id] = node.position;
+  }
+  return cablePositionsFromNodePositions(positions);
+}
+
+function visualCablesFromReactFlowNodes(nodes: Node[]): VisualCable[] {
+  return nodes
+    .filter((node) => node.type === "cable")
+    .map((node) => {
+      const vcId = visualCableIdFromNodeId(node.id);
+      const data = node.data as CableNodeData;
+      return {
+        id: vcId ?? node.id,
+        cable: data.label,
+        legId: data.legId,
+        device: "",
+        side: data.side,
+        order: 0,
+        tubes: data.tubes,
+      } as VisualCable;
+    });
+}
+
+function tubeShiftOptionsFromReactFlowNodes(
+  nodes: Node[],
+): TubeRowShiftOptions | undefined {
+  const collapsedTubeColorsByVcId = new Map<string, Set<TubeColorCode>>();
+  for (const node of nodes) {
+    if (node.type !== "cable") continue;
+    const vcId = visualCableIdFromNodeId(node.id);
+    const collapsed = (node.data as CableNodeData).collapsedTubes;
+    if (!vcId || !collapsed?.length) continue;
+    collapsedTubeColorsByVcId.set(
+      vcId,
+      new Set(collapsed as TubeColorCode[]),
+    );
+  }
+  if (collapsedTubeColorsByVcId.size === 0) return undefined;
+  return { collapsedTubeColorsByVcId };
+}
+
 export function buildLayoutRuleContext(
   graph: ConnectionGraph,
   layoutWidth?: number,
+  overrides?: Pick<LayoutOverrides, "collapseFullButtSplices">,
 ): LayoutRuleContext {
   const width = layoutWidth ?? importLayoutWidthForGraph(graph);
   const { visualCables, dominant } = buildVisualCablesForLayout(graph);
   const rowIndex = connectionRowIndexMap(graph, visualCables, dominant);
   const placement = computeCanvasPlacement(graph, visualCables, dominant, rowIndex);
   const layout = computeAlignedLayout(graph, visualCables, placement, dominant, width);
-  const { nodes, edges } = buildReactFlowGraph(graph, undefined, width);
+  const { nodes, edges } = buildReactFlowGraph(
+    graph,
+    overrides?.collapseFullButtSplices
+      ? {
+          reportKey: "layout-rules",
+          positions: {},
+          collapseFullButtSplices: true,
+        }
+      : undefined,
+    width,
+  );
   return {
     graph,
     visualCables,
@@ -1387,6 +1589,17 @@ export function checkLayoutRule(
         id,
         ok: sameSideFiberStemColumnsAligned(ctx),
         detail: "Same-side cable fiber label columns are not vertically aligned",
+      };
+    case "TUB-008":
+      return {
+        id,
+        ok: crossSideTubePairsAligned(
+          ctx.graph,
+          visualCablesFromReactFlowNodes(ctx.reactFlow.nodes),
+          cablePositionsFromReactFlowNodes(ctx.reactFlow.nodes),
+          tubeShiftOptionsFromReactFlowNodes(ctx.reactFlow.nodes),
+        ),
+        detail: "Cross-side buffer tube handles are not horizontally aligned",
       };
     case "CBL-001":
       return {

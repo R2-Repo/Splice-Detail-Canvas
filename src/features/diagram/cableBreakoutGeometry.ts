@@ -13,6 +13,8 @@ export const SHEATH_SIZE = {
 
 const SHEATH_ASPECT = SHEATH_SIZE.baseWidth / SHEATH_SIZE.baseHeight;
 
+const Y_TOLERANCE = 0.5;
+
 export const BREAKOUT = {
   tubeLengthBase: 52,
   /** Extra tube reach per buffer tube beyond the first (pairs with cable X offset). */
@@ -203,7 +205,15 @@ export function computeCableBreakout(
 
   const tubeGeoms: TubeBreakoutGeom[] = sortedTubes.map((tube) => {
     const tubeCenterY = tubeFiberCenterY(tube, bodyTop, pitch);
-    const origin = { x: tubeFaceX, y: cableCenterY };
+    const tubeY = tubeCenterY;
+    const sheathTop = sheath.y;
+    const sheathBottom = sheath.y + sheath.height;
+    const tubeCenterOnSheathFace =
+      tubeY >= sheathTop - Y_TOLERANCE && tubeY <= sheathBottom + Y_TOLERANCE;
+    // Horizontal when the fiber group center meets the sheath face; otherwise
+    // fan from cable center (multi-tube cables span taller than the sheath box).
+    const originY = tubeCenterOnSheathFace ? tubeY : cableCenterY;
+    const origin = { x: tubeFaceX, y: originY };
     const perTubeLength = Math.max(
       defaultTubeLength,
       tubeLengthForFiberCount(Math.max(1, tube.fibers.length), scale),
@@ -213,9 +223,11 @@ export function computeCableBreakout(
       stemXAbsolute - BREAKOUT.fiberStemGap - tubeFaceX,
     );
     const endX = tubeFaceX + tubeLength;
-    const endY = tubeCenterY;
+    const endY = tubeY;
     const angleDeg =
-      (Math.atan2(endY - origin.y, endX - origin.x) * 180) / Math.PI;
+      Math.abs(endY - originY) <= Y_TOLERANCE
+        ? 0
+        : (Math.atan2(endY - originY, endX - origin.x) * 180) / Math.PI;
 
     const fibers: FiberBreakoutGeom[] = tube.fibers.map((fiber) => {
       const rowY = bodyTop + fiber.rowYOffset + pitch / 2;

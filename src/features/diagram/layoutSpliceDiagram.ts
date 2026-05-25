@@ -158,13 +158,38 @@ export function computeDiagramLayout(
 export type ApplyLayoutOverridesOptions = {
   /** On import: keep saved Y but always use auto column X from layout. */
   refreshColumnX?: boolean;
+  /** Recompute Y from auto layout while preserving user drag delta vs last autoLayoutY. */
+  refreshRowLayout?: boolean;
 };
+
+export function autoPositionsFromLayout(
+  layout: DiagramLayout,
+): Record<string, { x: number; y: number }> {
+  const positions: Record<string, { x: number; y: number }> = {};
+  for (const [id, pos] of layout.cablePositions) {
+    positions[`cable-${id}`] = { x: pos.x, y: pos.y };
+  }
+  return positions;
+}
+
+export function autoLayoutYFromPositions(
+  positions: Record<string, { x: number; y: number }>,
+): Record<string, number> {
+  const autoLayoutY: Record<string, number> = {};
+  for (const [id, pos] of Object.entries(positions)) {
+    autoLayoutY[id] = pos.y;
+  }
+  return autoLayoutY;
+}
 
 export function applyLayoutOverrides(
   positions: Record<string, { x: number; y: number }>,
   overrides?: LayoutOverrides,
   options?: ApplyLayoutOverridesOptions,
 ): Record<string, { x: number; y: number }> {
+  if (options?.refreshRowLayout) {
+    return applyRowLayoutWithDragPreservation(positions, overrides);
+  }
   if (!overrides?.positions) return positions;
   if (!options?.refreshColumnX) {
     return { ...positions, ...overrides.positions };
@@ -178,15 +203,34 @@ export function applyLayoutOverrides(
   return merged;
 }
 
+/** Apply new auto Y plus preserved user drag delta from the previous auto snapshot. */
+export function applyRowLayoutWithDragPreservation(
+  autoPositions: Record<string, { x: number; y: number }>,
+  overrides?: LayoutOverrides,
+): Record<string, { x: number; y: number }> {
+  const saved = overrides?.positions ?? {};
+  const previousAuto = overrides?.autoLayoutY ?? {};
+  const merged = { ...autoPositions };
+
+  for (const [id, auto] of Object.entries(autoPositions)) {
+    const savedPos = saved[id];
+    const prevAutoY = previousAuto[id];
+    if (savedPos !== undefined && prevAutoY !== undefined) {
+      merged[id] = { x: auto.x, y: auto.y + (savedPos.y - prevAutoY) };
+    } else {
+      merged[id] = { x: auto.x, y: auto.y };
+    }
+  }
+
+  return merged;
+}
+
 export function nodePositionsForGraph(
   _graph: ConnectionGraph,
   layout: DiagramLayout,
   overrides?: LayoutOverrides,
   options?: ApplyLayoutOverridesOptions,
 ): Record<string, { x: number; y: number }> {
-  const positions: Record<string, { x: number; y: number }> = {};
-  for (const [id, pos] of layout.cablePositions) {
-    positions[`cable-${id}`] = { x: pos.x, y: pos.y };
-  }
-  return applyLayoutOverrides(positions, overrides, options);
+  const autoPositions = autoPositionsFromLayout(layout);
+  return applyLayoutOverrides(autoPositions, overrides, options);
 }

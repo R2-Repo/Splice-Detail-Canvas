@@ -4,27 +4,24 @@
 
 ## Last updated
 
-2026-05-24 — EDGE-009 OS-aware horizontal-first routing (source + target legs).
+2026-05-25 — collapsed buffer tube sheath attachment fix.
 
 ## Done
 
-- **Clear-X helpers:** `inwardClearXBeforeVertical` / `targetClearXBeforeVertical` delegate to `minClearMidXForHandle` with `sideSpans` + tag width; removed unused `sourceHorizClearX`.
-- **Path builder:** `buildDemarcatedSplicePaths` always runs handle-row horizontal to `sourceClearX` before Y bends; target leg uses `targetClearX` before vertical to handle row (no vertical at `targetX`).
-- **Render wiring:** `SpliceEdge` passes tag widths into `buildSplicePath`.
-- **Segment sync:** `hvDemarcatedSegments` / `spliceRouteSegments` match renderer; EDGE-011 deconflict uses gap horizontals only (`sourceGapHorizSegments` / `targetGapHorizSegments`).
-- **EDGE-009 enforcement:** `sameSideSplicesDetourTowardCenter` checks `splicePathsAvoidHandleColumnVertical` on packed lanes.
-- **Tests + docs:** routing regressions; `LAYOUT_RULES.md` EDGE-009 wording; **`npm run verify`** passes.
+- **Collapsed tube fix:** buffer tube line starts at `tube.origin` (sheath face) and runs to stem handle Y — no longer floats beside the node when collapsed
+- **Prior:** hybrid TUB-001 (horizontal on-sheath / fan from center for multi-tube); expanded ignores `visualShiftY`
+- **`npm run verify`** passes
 
 ## Try it
 
-1. `npm run dev`
-2. Re-import CSV (routing recomputed)
-3. Strands should run horizontally past OS labels before any vertical bend — import and after cable drag
+1. Hard refresh + re-import
+2. Multi-tube cables (24-fiber BL+OR, Example #3, production CSVs) should show sheath-connected fan-outs again
+3. Single-tube pairs should still have horizontal buffer tubes and even fan angles
 
 ## Next
 
-- Match PNG typography exactly
-- PDF export (needs dep approval)
+- Revisit EDGE-011 deconflict without breaking EDGE-004
+- PNG typography; PDF export (dep approval)
 
 ## Commands verified
 

@@ -36,13 +36,14 @@ Do **not** weaken or delete a rule without explicit user approval.
 
 | ID | Requirement |
 |----|-------------|
-| **TUB-001** | Every buffer tube originates at the **cable sheath center** (shared `cableCenterY`). |
-| **TUB-002** | Each tube tip (`end.y`) is vertically centered on its fiber group's row span. |
+| **TUB-001** | Buffer tubes exit from the cable sheath face: **horizontal** at the fiber-group center when that center lies on the sheath face; otherwise **fan from cable center** (`cableCenterY`) to the fiber-group center (multi-tube cables taller than the sheath). |
+| **TUB-002** | Each tube tip (`end.y`) is vertically centered on its fiber group's row span. `visualShiftY` applies to **collapsed** tube handles only — expanded tube/fan geometry never shifts. |
 | **TUB-003** | Cable sheath preserves **aspect ratio** at all scales and tube counts. |
 | **TUB-004** | Multi-tube cables have **longer tube reach** than single-tube cables (stem extends further from sheath). |
 | **TUB-005** | Right-side cables **mirror** breakout geometry (sheath and tubes face inward toward splice center). |
 | **TUB-006** | Buffer tubes on each cable are ordered top→bottom: **BL…AQ**, then **BL-BK…AQ-BK** (TIA solid then striped). |
 | **TUB-007** | Same-side cables share one **fiber label column** — circuit tags and fiber color codes align vertically; buffer tubes extend dynamically to meet the shared stem X. Per-tube horizontal reach scales with fiber count within the cable. |
+| **TUB-008** | Cross-side buffer-tube pairs whose pre-shift handle gap fits the pair shift budget may shift **collapsed** tube handles so they align (±2px). Expanded mode: **±12px** per tube; collapsed full-butt tubes: **±24px**. Larger gaps (ring-cut splits, cross-cable stubs) are exempt. Solver runs on **final** node positions after layout overrides. Fiber handles stay on 24px pitch; neighbor tubes use bidirectional spacing to preserve `TUBE_GROUP_GAP`. Expanded buffer tubes and fan-outs stay horizontal at fiber-group center. |
 
 ### Cable placement (`CBL`)
 
@@ -79,7 +80,7 @@ Do **not** weaken or delete a rule without explicit user approval.
 | **EDGE-001** | On import, each splice edge receives a **distinct routing lane** (no overlapping mid-X paths). |
 | **EDGE-002** | Splice paths use **orthogonal** H–V–H routing with a fusion dot at the elbow. |
 | **EDGE-003** | Lane registry assigns **staggered lanes on initial mount** (no drag required to separate overlapping strands). *Tested in `spliceEdgeRouting.test.ts`.* |
-| **EDGE-004** | Handle-to-handle splice path uses **≤2 orthogonal 90° bends**; prefer **0** (straight) when row Y aligns. |
+| **EDGE-004** | Handle-to-handle splice path uses **≤2 orthogonal 90° bends total** across both legs combined; prefer **0** (straight) when tube rows align within **12px** (half pitch). Collapsed tubes use the same limit. Deconfliction uses distinct `midX` lanes — not Y-track offsets that add bends. |
 | **EDGE-005** | **Buffer-tube grouping in center lanes:** `midX` order mirrors vertical `rowOffset` (+ tube-boundary gaps). For downward splices (right endpoint below left), top rows bend farther toward the target; for upward splices, top rows bend closer to the source. |
 | **EDGE-006** | Route template minimizes bends among grouping-preserving options; lane stagger applies only to `hv_demarcated` paths (crossing prevention). |
 | **EDGE-007** | Nested center bends avoid H×V segment crossings within same-direction bundles — upper fibers bend first (farther toward target) on downward splices. |

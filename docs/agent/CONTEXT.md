@@ -19,11 +19,18 @@
 
 ## Layout invariants (locked)
 
-**Canonical rules:** [`LAYOUT_RULES.md`](./LAYOUT_RULES.md) — 30 rule IDs (FBR/TUB/CBL/ROW/DOM/EDGE/STR).  
+**Canonical rules:** [`LAYOUT_RULES.md`](./LAYOUT_RULES.md) — 31 rule IDs (FBR/TUB/CBL/ROW/DOM/EDGE/STR).  
 **Enforcement:** `src/features/diagram/layoutRules.ts` + `layoutRules.test.ts` (Examples #1–#3 + production CSVs incl. `SPI-215_I-80.csv`).  
 **Agent rule:** `.cursor/rules/layout-rules.mdc` — **alwaysApply** (every agent request).
 
 When adding layout behavior: update rules doc + checker + contract test in the same change.
+
+## Recent (2026-05-25)
+
+- **TUB-001 horizontal breakout:** single-tube / on-sheath groups exit horizontal at fiber center; multi-tube fans from sheath center when groups exceed sheath height; `visualShiftY` collapsed handles only
+- **EDGE-004 strict two-bend routing:** all splice paths (fiber + collapsed butt) use ≤2 bends total; removed Y-track offsets that added extra elbows; deconflict via distinct `midX` only
+- **Dynamic layout on collapse toggle:** `refreshRowLayout` + `autoLayoutY` drag delta preservation
+- **Tube-shift v2 (TUB-008):** solver on final merged positions; ±24px collapsed / ±12px expanded
 
 ## Recent (2026-05-24)
 
@@ -43,6 +50,8 @@ When adding layout behavior: update rules doc + checker + contract test in the s
 - **Wider center floor:** `minCenterGapForRowSpan` floor 200 → 320px so busy multi-cable diagrams have routing headroom
 - **Import fitView:** fit-width camera on import (full horizontal span; pan vertically when tall); layout width always `max(stage, content minimum)` for all diagram sizes
 - **EDGE-009 horizontal-first (full):** `inwardClearXBeforeVertical` / `targetClearXBeforeVertical` use OS-aware `minClearMidXForHandle` (not 60px-only); source always leads in on handle row; target leg mirrors (no vertical at `targetX`); segment model + EDGE-011 gap horizontals synced; EDGE-009 checker validates path segments via `splicePathsAvoidHandleColumnVertical`
+- **Per-lane stagger bend (EDGE-011/012):** Y-offset tracks use `laneClearXBeforeVertical` so strands no longer share one vertical bend X before center `midX`; gap horizontals + `hvDemarcatedSegments` synced; full center span used for midX lanes + bundle grouping
+- **Spacing fix (EDGE-011):** removed per-edge `midX` re-clamp that collapsed packed lanes onto one X; `assignGapBendLaneXs` assigns distinct gap bend X per strand; import/render trust frozen `routingMidX`
 
 ## Decisions
 

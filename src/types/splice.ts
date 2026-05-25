@@ -129,12 +129,14 @@ export type LayoutNodePosition = {
 };
 
 /** Bump when override shape/semantics change — ignores stale localStorage. */
-export const LAYOUT_OVERRIDE_VERSION = 9;
+export const LAYOUT_OVERRIDE_VERSION = 10;
 
 export type LayoutOverrides = {
   reportKey: string;
   layoutVersion?: number;
   positions: Record<string, { x: number; y: number }>;
+  /** Last auto-layout Y per node id — used to preserve user drag delta on row refresh. */
+  autoLayoutY?: Record<string, number>;
   existingEdgeIds?: string[];
   /** User-dragged display side per visual cable id (mirrors sheath/tubes/strands). */
   cableSides?: Record<string, "left" | "right">;

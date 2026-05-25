@@ -75,7 +75,7 @@ describe("SPI-215 stub stack spacing", () => {
 
     const { nodes } = buildReactFlowGraph(graph, {
       reportKey: "test",
-      layoutVersion: 9,
+      layoutVersion: 10,
       positions: Object.fromEntries(stubIds.map((id) => [id, { x: 900, y: 2600 }])),
     });
 

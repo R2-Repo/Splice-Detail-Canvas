@@ -13,6 +13,7 @@ import {
   type LayoutRuleId,
 } from "./layoutRules";
 import { parseBentleyCsv } from "@/features/import/parseBentleyCsv";
+import { TIA_12_COLORS } from "@/features/diagram/colorCode";
 
 const examples = join(process.cwd(), "docs/reference/examples");
 const EXAMPLE_NUMBERS = [1, 2, 3] as const;
@@ -114,5 +115,83 @@ describe("reference production CSV layout sanity", () => {
       const result = checkLayoutRule(id, ctx);
       expect(result.ok, result.detail).toBe(true);
     }
+  });
+});
+
+describe("collapsed full butt splice layout (EDGE-004)", () => {
+  it("Example #3 OR tube passes EDGE-004 when collapsed", () => {
+    const ctx = buildLayoutRuleContext(graphFromExample(3), undefined, {
+      collapseFullButtSplices: true,
+    });
+    const buttEdges = ctx.reactFlow.edges.filter((e) => e.id.startsWith("butt-"));
+    expect(buttEdges.length).toBeGreaterThan(0);
+    const result = checkLayoutRule("EDGE-004", ctx);
+    expect(result.ok, result.detail).toBe(true);
+  });
+
+  it("300N_MAIN collapsed butt tubes pass EDGE-004", () => {
+    const csv = readFileSync(join(examples, "300N_MAIN.csv"), "utf8");
+    const graph = buildConnectionGraph(parseBentleyCsv(csv));
+    const ctx = buildLayoutRuleContext(graph, undefined, {
+      collapseFullButtSplices: true,
+    });
+    const buttEdges = ctx.reactFlow.edges.filter((e) => e.id.startsWith("butt-"));
+    expect(buttEdges.length).toBeGreaterThan(0);
+    const result = checkLayoutRule("EDGE-004", ctx);
+    expect(result.ok, result.detail).toBe(true);
+  });
+
+  it("synthetic 12-fiber BL↔OR collapsed tube passes EDGE-004", () => {
+    const pairs = TIA_12_COLORS.map((color, index) => ({
+      id: `pair-${index}`,
+      endpointA: {
+        device: "DEV-A",
+        cable: "CABLE-A",
+        fiberNumber: index + 1,
+        tubeColor: "BL" as const,
+        fiberColor: color.abbrev,
+        csvColumn: "from" as const,
+      },
+      endpointB: {
+        device: "DEV-B",
+        cable: "CABLE-B",
+        fiberNumber: index + 1,
+        tubeColor: "OR" as const,
+        fiberColor: color.abbrev,
+        csvColumn: "to" as const,
+      },
+    }));
+    const graph = buildConnectionGraph({
+      header: {},
+      pairs,
+      cableAppearances: [
+        {
+          device: "DEV-A",
+          cable: "CABLE-A",
+          left: { from: 12, to: 0 },
+          right: { from: 0, to: 0 },
+        },
+        {
+          device: "DEV-B",
+          cable: "CABLE-B",
+          left: { from: 0, to: 0 },
+          right: { from: 0, to: 12 },
+        },
+      ],
+    });
+    const ctx = buildLayoutRuleContext(graph, undefined, {
+      collapseFullButtSplices: true,
+    });
+    expect(ctx.reactFlow.edges.some((e) => e.id.startsWith("butt-"))).toBe(true);
+    const result = checkLayoutRule("EDGE-004", ctx);
+    expect(result.ok, result.detail).toBe(true);
+  });
+
+  it("Example #3 collapsed passes TUB-008 on butt tube pairs", () => {
+    const ctx = buildLayoutRuleContext(graphFromExample(3), undefined, {
+      collapseFullButtSplices: true,
+    });
+    const tub008 = checkLayoutRule("TUB-008", ctx);
+    expect(tub008.ok, tub008.detail).toBe(true);
   });
 });

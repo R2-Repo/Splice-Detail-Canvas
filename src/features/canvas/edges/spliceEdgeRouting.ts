@@ -19,6 +19,7 @@ import {
 } from "@/features/diagram/cableLabels";
 import { computeCableBreakout } from "@/features/diagram/cableBreakoutGeometry";
 import type { VisualCable } from "@/features/diagram/visualCables";
+import type { CableLegId, TubeColorCode } from "@/types/splice";
 
 export type SpliceEdgeRouteEntry = {
   id: string;
@@ -41,6 +42,8 @@ export type SpliceRoutingLaneData = {
   routingJogX?: number;
   routingSourceHorizY?: number;
   routingTargetHorizY?: number;
+  routingSourceBendX?: number;
+  routingTargetBendX?: number;
   /** Canvas center X used for inward-sign / EDGE-009 clearance. */
   diagramCenterX?: number;
 };
@@ -56,6 +59,7 @@ export type SpliceHandleEntry = {
   fallbackLane: number;
   rowOffset?: number;
   tubeBundleKey?: string;
+  fullButtSplice?: boolean;
   sideCircuitSpan?: SideCircuitLabelSpan;
   sourceTagWidth?: number;
   targetTagWidth?: number;
@@ -71,6 +75,8 @@ export function buildSpliceHandleEntries(
     id: string;
     source?: string | null;
     target?: string | null;
+    sourceHandle?: string | null;
+    targetHandle?: string | null;
     type?: string | null;
     data?: unknown;
   }>,
@@ -101,10 +107,13 @@ export function buildSpliceHandleEntries(
     const edgeData = (edge.data ?? {}) as {
       rowOffset?: number;
       tubeBundleKey?: string;
+      fullButtSplice?: boolean;
       laneIndex?: number;
       sideCircuitSpan?: SideCircuitLabelSpan;
       circuitName?: string;
     };
+    const isButtEdge =
+      edgeData.fullButtSplice === true || edge.id.startsWith("butt-");
     const connectionId = edge.id.replace(/^splice-/, "").replace(/^butt-/, "");
     const sourceFiber = sourceVc.tubes
       .flatMap((t) => t.fibers)
@@ -116,22 +125,58 @@ export function buildSpliceHandleEntries(
     const targetScale = (targetNode.data as { diagramScale?: number }).diagramScale ?? 1;
     const sourceAligned = (sourceNode.data as { alignedStemX?: number }).alignedStemX;
     const targetAligned = (targetNode.data as { alignedStemX?: number }).alignedStemX;
-    const sourcePos = fiberHandlePosition(
-      sourceVc,
-      connectionId,
-      sourceNode.position,
-      sourceScale,
-      sourceAligned,
-      sourceFiber?.circuitName ?? edgeData.circuitName,
-    );
-    const targetPos = fiberHandlePosition(
-      targetVc,
-      connectionId,
-      targetNode.position,
-      targetScale,
-      targetAligned,
-      targetFiber?.circuitName ?? edgeData.circuitName,
-    );
+
+    let sourcePos: { x: number; y: number };
+    let targetPos: { x: number; y: number };
+    let sourceTagWidth = 0;
+    let targetTagWidth = 0;
+
+    if (isButtEdge) {
+      const sourceTube =
+        parseTubeHandleId(edge.sourceHandle) ??
+        parseButtTubeEndpointsFromEdgeId(edge.id)?.endpointA;
+      const targetTube =
+        parseTubeHandleId(edge.targetHandle) ??
+        parseButtTubeEndpointsFromEdgeId(edge.id)?.endpointB;
+      if (!sourceTube || !targetTube) continue;
+      sourcePos = tubeHandlePosition(
+        sourceVc,
+        sourceTube.tubeColor,
+        sourceNode.position,
+        sourceScale,
+        sourceAligned,
+      );
+      targetPos = tubeHandlePosition(
+        targetVc,
+        targetTube.tubeColor,
+        targetNode.position,
+        targetScale,
+        targetAligned,
+      );
+    } else {
+      sourcePos = fiberHandlePosition(
+        sourceVc,
+        connectionId,
+        sourceNode.position,
+        sourceScale,
+        sourceAligned,
+        sourceFiber?.circuitName ?? edgeData.circuitName,
+      );
+      targetPos = fiberHandlePosition(
+        targetVc,
+        connectionId,
+        targetNode.position,
+        targetScale,
+        targetAligned,
+        targetFiber?.circuitName ?? edgeData.circuitName,
+      );
+      sourceTagWidth = formattedCircuitTagWidth(
+        sourceFiber?.circuitName ?? edgeData.circuitName,
+      );
+      targetTagWidth = formattedCircuitTagWidth(
+        targetFiber?.circuitName ?? edgeData.circuitName,
+      );
+    }
 
     entries.push({
       id: edge.id,
@@ -144,13 +189,10 @@ export function buildSpliceHandleEntries(
       fallbackLane: edgeData.laneIndex ?? 0,
       rowOffset: edgeData.rowOffset,
       tubeBundleKey: edgeData.tubeBundleKey,
+      fullButtSplice: isButtEdge,
       sideCircuitSpan: edgeData.sideCircuitSpan,
-      sourceTagWidth: formattedCircuitTagWidth(
-        sourceFiber?.circuitName ?? edgeData.circuitName,
-      ),
-      targetTagWidth: formattedCircuitTagWidth(
-        targetFiber?.circuitName ?? edgeData.circuitName,
-      ),
+      sourceTagWidth,
+      targetTagWidth,
     });
   }
 
@@ -159,7 +201,7 @@ export function buildSpliceHandleEntries(
 
 export function assignSpliceRoutingLanesFromHandleEntries(
   entries: SpliceHandleEntry[],
-  diagramCenterX?: number,
+  _diagramCenterX?: number,
 ): Map<string, SpliceRoutingLane> {
   if (entries.length === 0) return new Map();
 
@@ -174,33 +216,10 @@ export function assignSpliceRoutingLanesFromHandleEntries(
     targetY: entry.targetY,
     rowOffset: entry.rowOffset ?? entry.fallbackLane,
     tubeBundleKey: entry.tubeBundleKey,
+    fullButtSplice: entry.fullButtSplice,
   }));
 
-  const centerX =
-    diagramCenterX ?? globalDiagramCenterX(candidates);
-  const result = assignSpliceRoutingLanes(candidates, sideSpans);
-
-  for (const entry of entries) {
-    const lane = result.get(entry.id);
-    if (!lane) continue;
-    const midX = enforceMinHorizontalInset(
-      lane.midX,
-      entry.sourceX,
-      entry.targetX,
-      centerX,
-      sideSpans,
-      MIN_SPLICE_HORIZONTAL_INSET,
-      entry.sourceTagWidth ?? 0,
-      entry.targetTagWidth ?? 0,
-      true,
-      true,
-    );
-    if (Math.abs(midX - lane.midX) > SPLICE_PATH_EPS) {
-      result.set(entry.id, { ...lane, midX });
-    }
-  }
-
-  return result;
+  return assignSpliceRoutingLanes(candidates, sideSpans);
 }
 
 /** Rank 0 = highest (smallest row offset / sourceY) on the left cable. */
@@ -671,6 +690,10 @@ export type SpliceRoutingLane = {
   sourceHorizY?: number;
   /** Distinct Y for target-side horizontal legs when same-row paths would stack. */
   targetHorizY?: number;
+  /** Staggered gap X for source-side vertical bend (EDGE-011). */
+  sourceBendX?: number;
+  /** Staggered gap X for target-side vertical bend (EDGE-011). */
+  targetBendX?: number;
 };
 
 export function routingLaneDataFromLane(
@@ -685,6 +708,12 @@ export function routingLaneDataFromLane(
     ...(lane.targetHorizY !== undefined
       ? { routingTargetHorizY: lane.targetHorizY }
       : {}),
+    ...(lane.sourceBendX !== undefined
+      ? { routingSourceBendX: lane.sourceBendX }
+      : {}),
+    ...(lane.targetBendX !== undefined
+      ? { routingTargetBendX: lane.targetBendX }
+      : {}),
   };
 }
 
@@ -697,42 +726,22 @@ export function routingLaneFromData(
     jogX: data.routingJogX,
     sourceHorizY: data.routingSourceHorizY,
     targetHorizY: data.routingTargetHorizY,
+    sourceBendX: data.routingSourceBendX,
+    targetBendX: data.routingTargetBendX,
   };
 }
 
 export const MAX_SPLICE_BENDS = 2;
 
-/** Max bends when a tube bundle uses a shared horizontal trunk before lane spread. */
-export const MAX_SPLICE_BENDS_WITH_BUNDLE_JOG = 3;
+/** @deprecated Bundle jog shares handle-row horizontals — no extra bend budget. */
+export const MAX_SPLICE_BENDS_WITH_BUNDLE_JOG = MAX_SPLICE_BENDS;
 
 export function maxSpliceBendsForLane(
-  sourceY: number,
-  targetY: number,
-  lane: SpliceRoutingLane,
+  _sourceY: number,
+  _targetY: number,
+  _lane: SpliceRoutingLane,
 ): number {
-  let max = MAX_SPLICE_BENDS;
-  const trunkX = lane.jogX ?? lane.midX;
-  if (
-    lane.jogX !== undefined &&
-    Math.abs(trunkX - lane.midX) > SPLICE_PATH_EPS
-  ) {
-    max = MAX_SPLICE_BENDS_WITH_BUNDLE_JOG;
-  }
-  if (
-    lane.sourceHorizY !== undefined &&
-    Math.abs(lane.sourceHorizY - sourceY) > SPLICE_PATH_EPS
-  ) {
-    // clearX horizontal lead-in + Y-track shift adds one bend vs legacy path
-    max += 2;
-  }
-  if (
-    lane.targetHorizY !== undefined &&
-    Math.abs(lane.targetHorizY - targetY) > SPLICE_PATH_EPS
-  ) {
-    // clearX horizontal lead-in + Y-track shift on target leg
-    max += 2;
-  }
-  return max;
+  return MAX_SPLICE_BENDS;
 }
 
 /**
@@ -746,7 +755,10 @@ export function buildSplicePath(
   targetY: number,
   midX: number,
   jogX?: number,
-  sideHoriz?: Pick<SpliceRoutingLane, "sourceHorizY" | "targetHorizY">,
+  sideHoriz?: Pick<
+    SpliceRoutingLane,
+    "sourceHorizY" | "targetHorizY" | "sourceBendX" | "targetBendX"
+  >,
   sideSpans: SideCircuitLabelSpan = defaultSideCircuitLabelSpan(),
   diagramCenterX = (sourceX + targetX) / 2,
   sourceTagWidth = 0,
@@ -853,11 +865,69 @@ export function targetClearXBeforeVertical(
   );
 }
 
+function clampGapBendX(
+  staggered: number,
+  handleX: number,
+  anchorX: number,
+  base: number,
+): number {
+  const spanLo = Math.min(handleX, anchorX, base);
+  const spanHi = Math.max(handleX, anchorX, base);
+  return Math.max(spanLo, Math.min(staggered, spanHi));
+}
+
+/**
+ * Per-lane clear X for Y-track bends — staggers inward by global gap lane index
+ * so strands never stack vertical legs at one shared OS column X.
+ */
+export function laneClearXBeforeVertical(
+  handleX: number,
+  anchorX: number,
+  anchorY: number,
+  horizY: number,
+  diagramCenterX: number,
+  sideSpans: SideCircuitLabelSpan = defaultSideCircuitLabelSpan(),
+  tagWidth = 0,
+  jog = MIN_SPLICE_HORIZONTAL_INSET,
+  gapLaneIndex = 0,
+): number {
+  const base = inwardClearXBeforeVertical(
+    handleX,
+    anchorX,
+    diagramCenterX,
+    sideSpans,
+    tagWidth,
+    jog,
+  );
+  const horizLaneIndex =
+    Math.abs(horizY - anchorY) > SPLICE_PATH_EPS
+      ? Math.round(Math.abs(horizY - anchorY) / SPLICE_LANE_SEP)
+      : 0;
+  const laneIndex = gapLaneIndex + horizLaneIndex;
+  if (laneIndex <= 0) {
+    return base;
+  }
+  const inward = canvasSideForHandle(handleX, diagramCenterX) === "left" ? 1 : -1;
+  const staggered = base + inward * laneIndex * SPLICE_LANE_SEP;
+  return clampGapBendX(staggered, handleX, anchorX, base);
+}
+
+function appendHorizontalPoint(
+  parts: string[],
+  x: number,
+  y: number,
+  lastX: number,
+): number {
+  if (Math.abs(x - lastX) <= SPLICE_PATH_EPS) return lastX;
+  parts.push(`L ${x},${y}`);
+  return x;
+}
+
 /**
  * Left leg stops at the fusion dot; right leg starts there (different strand colors).
  *
- * EDGE-009: the source handle row runs horizontally inward before any vertical bend.
- * Y-offset tracks (`sourceHorizY`) bend at `clearX`, never at `sourceX`.
+ * EDGE-004: at most two 90° bends handle-to-handle — route on handle rows only;
+ * optional bundle jog uses same-Y horizontals before one center vertical.
  */
 export function buildDemarcatedSplicePaths(
   sourceX: number,
@@ -866,11 +936,14 @@ export function buildDemarcatedSplicePaths(
   targetY: number,
   midX: number,
   jogX?: number,
-  sideHoriz?: Pick<SpliceRoutingLane, "sourceHorizY" | "targetHorizY">,
+  _sideHoriz?: Pick<
+    SpliceRoutingLane,
+    "sourceHorizY" | "targetHorizY" | "sourceBendX" | "targetBendX"
+  >,
   sideSpans: SideCircuitLabelSpan = defaultSideCircuitLabelSpan(),
   diagramCenterX = (sourceX + targetX) / 2,
   sourceTagWidth = 0,
-  targetTagWidth = 0,
+  _targetTagWidth = 0,
 ): {
   leftPath: string;
   rightPath: string;
@@ -878,11 +951,6 @@ export function buildDemarcatedSplicePaths(
   spliceY: number;
 } {
   const spliceY = (sourceY + targetY) / 2;
-  const srcHY = sideHoriz?.sourceHorizY ?? sourceY;
-  const tgtHY = sideHoriz?.targetHorizY ?? targetY;
-  const trunkX = jogX ?? midX;
-  const usesBundleJog =
-    jogX !== undefined && Math.abs(trunkX - midX) > SPLICE_PATH_EPS;
   const sourceClearX = inwardClearXBeforeVertical(
     sourceX,
     midX,
@@ -890,48 +958,25 @@ export function buildDemarcatedSplicePaths(
     sideSpans,
     sourceTagWidth,
   );
-  const targetClearX = targetClearXBeforeVertical(
-    targetX,
-    midX,
-    diagramCenterX,
-    sideSpans,
-    targetTagWidth,
-  );
-  const sourceOffsetY = Math.abs(srcHY - sourceY) > SPLICE_PATH_EPS;
-  const targetOffsetY = Math.abs(tgtHY - targetY) > SPLICE_PATH_EPS;
+  const trunkX = jogX ?? midX;
 
-  const leftParts = [`M ${sourceX},${sourceY}`, `L ${sourceClearX},${sourceY}`];
-
-  if (sourceOffsetY) {
-    leftParts.push(`L ${sourceClearX},${srcHY}`);
-    if (usesBundleJog) {
-      leftParts.push(`L ${trunkX},${srcHY}`, `L ${midX},${srcHY}`);
-    } else {
-      leftParts.push(`L ${midX},${srcHY}`);
-    }
-  } else if (usesBundleJog) {
-    if (Math.abs(trunkX - sourceClearX) > SPLICE_PATH_EPS) {
-      leftParts.push(`L ${trunkX},${sourceY}`);
-    }
-    if (Math.abs(midX - trunkX) > SPLICE_PATH_EPS) {
-      leftParts.push(`L ${midX},${sourceY}`);
-    }
-  } else if (Math.abs(midX - sourceClearX) > SPLICE_PATH_EPS) {
-    leftParts.push(`L ${midX},${sourceY}`);
+  const leftParts = [`M ${sourceX},${sourceY}`];
+  let lastX = sourceX;
+  lastX = appendHorizontalPoint(leftParts, sourceClearX, sourceY, lastX);
+  if (
+    jogX !== undefined &&
+    Math.abs(trunkX - midX) > SPLICE_PATH_EPS
+  ) {
+    lastX = appendHorizontalPoint(leftParts, trunkX, sourceY, lastX);
   }
-
+  lastX = appendHorizontalPoint(leftParts, midX, sourceY, lastX);
   leftParts.push(`L ${midX},${spliceY}`);
 
-  const rightParts = [`M ${midX},${spliceY}`, `L ${midX},${tgtHY}`];
-  if (targetOffsetY) {
-    rightParts.push(
-      `L ${targetClearX},${tgtHY}`,
-      `L ${targetClearX},${targetY}`,
-      `L ${targetX},${targetY}`,
-    );
-  } else {
-    rightParts.push(`L ${targetX},${tgtHY}`);
-  }
+  const rightParts = [
+    `M ${midX},${spliceY}`,
+    `L ${midX},${targetY}`,
+    `L ${targetX},${targetY}`,
+  ];
 
   return {
     leftPath: leftParts.join(" "),
@@ -1002,6 +1047,8 @@ export type MidXLaneCandidate = {
   rowOffset: number;
   /** Same source buffer tube + target cable — lanes stay contiguous. */
   tubeBundleKey?: string;
+  /** Collapsed full-butt-splice tube — no Y-track deconflict (≤2 bends). */
+  fullButtSplice?: boolean;
 };
 
 /** Route bundle = one source buffer tube → one target cable. */
@@ -1789,6 +1836,135 @@ function assignVertLanesForTubeBundle(
   }
 }
 
+/**
+ * EDGE-011: assign distinct gap bend X per strand so OS-column vertical legs
+ * never stack when Y-offset tracks turn toward center midX.
+ */
+function assignGapBendLaneXs(
+  candidates: MidXLaneCandidate[],
+  lanes: Map<string, SpliceRoutingLane>,
+  sideSpans: SideCircuitLabelSpan,
+  diagramCenterX: number,
+): void {
+  const byZone = new Map<string, MidXLaneCandidate[]>();
+  for (const candidate of candidates) {
+    if (!lanes.has(candidate.id)) continue;
+    const key = spliceRoutingZoneKey(candidate.sourceX, candidate.targetX);
+    const list = byZone.get(key) ?? [];
+    list.push(candidate);
+    byZone.set(key, list);
+  }
+
+  const gapOccupied: Array<{ x: number; y0: number; y1: number }> = [];
+
+  for (const group of byZone.values()) {
+    const sorted = sortCandidatesByRowOrder(group);
+    for (let zoneIndex = 0; zoneIndex < sorted.length; zoneIndex++) {
+      const candidate = sorted[zoneIndex]!;
+      if (candidate.fullButtSplice) continue;
+      const lane = lanes.get(candidate.id)!;
+      const srcHY = lane.sourceHorizY ?? candidate.sourceY;
+      const tgtHY = lane.targetHorizY ?? candidate.targetY;
+      const sourceOffsetY =
+        Math.abs(srcHY - candidate.sourceY) > SPLICE_PATH_EPS;
+      const targetOffsetY =
+        Math.abs(tgtHY - candidate.targetY) > SPLICE_PATH_EPS;
+      const nextLane: SpliceRoutingLane = { ...lane };
+
+      if (sourceOffsetY) {
+        let placedX: number | undefined;
+        for (let attempt = 0; attempt <= 64; attempt++) {
+          const bendX = laneClearXBeforeVertical(
+            candidate.sourceX,
+            lane.midX,
+            candidate.sourceY,
+            srcHY,
+            diagramCenterX,
+            sideSpans,
+            0,
+            MIN_SPLICE_HORIZONTAL_INSET,
+            zoneIndex + attempt,
+          );
+          const y0 = Math.min(candidate.sourceY, srcHY);
+          const y1 = Math.max(candidate.sourceY, srcHY);
+          const conflict = gapOccupied.some(
+            (existing) =>
+              Math.abs(existing.x - bendX) <= SPLICE_PATH_EPS &&
+              verticalSpanOverlaps(y0, y1, existing.y0, existing.y1),
+          );
+          if (!conflict) {
+            placedX = bendX;
+            gapOccupied.push({ x: bendX, y0, y1 });
+            break;
+          }
+        }
+        nextLane.sourceBendX =
+          placedX ??
+          laneClearXBeforeVertical(
+            candidate.sourceX,
+            lane.midX,
+            candidate.sourceY,
+            srcHY,
+            diagramCenterX,
+            sideSpans,
+            0,
+            MIN_SPLICE_HORIZONTAL_INSET,
+            zoneIndex,
+          );
+      }
+
+      if (targetOffsetY) {
+        let placedX: number | undefined;
+        for (let attempt = 0; attempt <= 64; attempt++) {
+          const bendX = laneClearXBeforeVertical(
+            candidate.targetX,
+            lane.midX,
+            candidate.targetY,
+            tgtHY,
+            diagramCenterX,
+            sideSpans,
+            0,
+            MIN_SPLICE_HORIZONTAL_INSET,
+            zoneIndex + attempt,
+          );
+          const y0 = Math.min(candidate.targetY, tgtHY);
+          const y1 = Math.max(candidate.targetY, tgtHY);
+          const conflict = gapOccupied.some(
+            (existing) =>
+              Math.abs(existing.x - bendX) <= SPLICE_PATH_EPS &&
+              verticalSpanOverlaps(y0, y1, existing.y0, existing.y1),
+          );
+          if (!conflict) {
+            placedX = bendX;
+            gapOccupied.push({ x: bendX, y0, y1 });
+            break;
+          }
+        }
+        nextLane.targetBendX =
+          placedX ??
+          laneClearXBeforeVertical(
+            candidate.targetX,
+            lane.midX,
+            candidate.targetY,
+            tgtHY,
+            diagramCenterX,
+            sideSpans,
+            0,
+            MIN_SPLICE_HORIZONTAL_INSET,
+            zoneIndex,
+          );
+      }
+
+      if (
+        nextLane.sourceBendX !== lane.sourceBendX ||
+        nextLane.targetBendX !== lane.targetBendX
+      ) {
+        lanes.set(candidate.id, nextLane);
+      }
+    }
+  }
+}
+
 function assignSideVertLaneXs(
   candidates: MidXLaneCandidate[],
   lanes: Map<string, SpliceRoutingLane>,
@@ -1825,6 +2001,7 @@ function assignSideVertLaneXs(
   );
 
   for (const candidate of singles) {
+    if (candidate.fullButtSplice) continue;
     const lane = lanes.get(candidate.id)!;
     const srcHY = lane.sourceHorizY ?? candidate.sourceY;
     const tgtHY = lane.targetHorizY ?? candidate.targetY;
@@ -1954,21 +2131,191 @@ export function assignSpliceRoutingLanes(
     }
   }
 
-  const sideHoriz = assignSideHorizLaneYs(
-    candidates,
-    result,
-    sideSpans,
-    diagramCenterX,
-  );
-  for (const [id, offsets] of sideHoriz) {
-    const lane = result.get(id);
-    if (!lane) continue;
-    result.set(id, { ...lane, ...offsets });
-  }
-
   assignSideVertLaneXs(candidates, result, sideSpans);
 
+  const buttByZone = new Map<string, MidXLaneCandidate[]>();
+  for (const candidate of candidates) {
+    if (!candidate.fullButtSplice) continue;
+    const key = spliceRoutingZoneKey(candidate.sourceX, candidate.targetX);
+    const list = buttByZone.get(key) ?? [];
+    list.push(candidate);
+    buttByZone.set(key, list);
+  }
+  for (const group of buttByZone.values()) {
+    const sorted = sortCandidatesByRowOrder(group);
+    for (let laneIndex = 0; laneIndex < sorted.length; laneIndex++) {
+      const candidate = sorted[laneIndex]!;
+      if (!result.has(candidate.id)) continue;
+      result.set(candidate.id, {
+        midX: resolveButtSpliceMidX(
+          candidate.sourceX,
+          candidate.targetX,
+          diagramCenterX,
+          sideSpans,
+          laneIndex,
+          sorted.length,
+        ),
+      });
+    }
+  }
+
   return result;
+}
+
+export function clampButtSpliceMidX(
+  midX: number,
+  sourceX: number,
+  targetX: number,
+  diagramCenterX: number,
+  sideSpans: SideCircuitLabelSpan = defaultSideCircuitLabelSpan(),
+): number {
+  return enforceMinHorizontalInset(
+    midX,
+    sourceX,
+    targetX,
+    diagramCenterX,
+    sideSpans,
+    MIN_SPLICE_HORIZONTAL_INSET,
+    0,
+    0,
+    true,
+    true,
+  );
+}
+
+export const BUTT_SPLICE_STRAIGHT_Y_TOLERANCE = FIBER_ROW_PITCH / 2;
+
+/**
+ * Vertical lane X for collapsed tubes — always in the center routing band,
+ * never hugging a cable column (row-offset packed midX is for fibers only).
+ */
+export function resolveButtSpliceMidX(
+  sourceX: number,
+  targetX: number,
+  diagramCenterX: number,
+  sideSpans: SideCircuitLabelSpan = defaultSideCircuitLabelSpan(),
+  laneIndex = 0,
+  laneCount = 1,
+): number {
+  const { lo, hi, span } = spliceRoutingBounds(sourceX, targetX);
+  const inset = spliceMidXInsetBounds(
+    sourceX,
+    targetX,
+    diagramCenterX,
+    sideSpans,
+    MIN_SPLICE_HORIZONTAL_INSET,
+    0,
+    0,
+    true,
+    true,
+  );
+  let useLo = Math.max(lo, inset.lo);
+  let useHi = Math.min(hi, inset.hi);
+  if (useLo > useHi + SPLICE_PATH_EPS) {
+    return clampButtSpliceMidX(
+      (sourceX + targetX) / 2,
+      sourceX,
+      targetX,
+      diagramCenterX,
+      sideSpans,
+    );
+  }
+  if (useLo > useHi) {
+    const swap = useLo;
+    useLo = useHi;
+    useHi = swap;
+  }
+  const center = (useLo + useHi) / 2;
+  const count = Math.max(1, laneCount);
+  if (count <= 1 || span <= SPLICE_PATH_EPS) {
+    return center;
+  }
+  const sep = Math.min(
+    SPLICE_LANE_SEP,
+    (useHi - useLo) / Math.max(1, count - 1),
+  );
+  const offset = (laneIndex - (count - 1) / 2) * sep;
+  return Math.max(useLo, Math.min(useHi, center + offset));
+}
+
+function buttSpliceYsAligned(sourceY: number, targetY: number): boolean {
+  return Math.abs(sourceY - targetY) <= BUTT_SPLICE_STRAIGHT_Y_TOLERANCE;
+}
+
+/**
+ * Collapsed full-butt-splice tube path — ≤2 bends, bend only when row Y differs.
+ * Straight (0 bends) when handle rows align within half pitch.
+ * Cross-side: vertical at center midX on source leg; target leg horizontal only.
+ */
+export function buildButtSplicePath(
+  sourceX: number,
+  sourceY: number,
+  targetX: number,
+  targetY: number,
+  _midX: number,
+  sideSpans: SideCircuitLabelSpan = defaultSideCircuitLabelSpan(),
+  diagramCenterX = (sourceX + targetX) / 2,
+  laneIndex = 0,
+  laneCount = 1,
+): SplicePathResult {
+  const verticalX = resolveButtSpliceMidX(
+    sourceX,
+    targetX,
+    diagramCenterX,
+    sideSpans,
+    laneIndex,
+    laneCount,
+  );
+
+  if (buttSpliceYsAligned(sourceY, targetY)) {
+    const routeY = (sourceY + targetY) / 2;
+    const spliceX = (sourceX + targetX) / 2;
+    const leftPath = `M ${sourceX},${routeY} L ${spliceX},${routeY}`;
+    const rightPath = `M ${spliceX},${routeY} L ${targetX},${routeY}`;
+    return {
+      leftPath,
+      rightPath,
+      spliceX,
+      spliceY: routeY,
+      bendCount: countOrthogonalBends(leftPath, rightPath),
+      template: "straight",
+    };
+  }
+
+  const template = pickSpliceRouteTemplate(sourceX, sourceY, targetX, targetY);
+  const sourceClearX = inwardClearXBeforeVertical(
+    sourceX,
+    verticalX,
+    diagramCenterX,
+    sideSpans,
+    0,
+  );
+  const leftParts = [`M ${sourceX},${sourceY}`];
+  if (Math.abs(sourceClearX - sourceX) > SPLICE_PATH_EPS) {
+    leftParts.push(`L ${sourceClearX},${sourceY}`);
+  }
+  if (Math.abs(verticalX - sourceClearX) > SPLICE_PATH_EPS) {
+    leftParts.push(`L ${verticalX},${sourceY}`);
+  } else if (
+    Math.abs(verticalX - sourceX) > SPLICE_PATH_EPS &&
+    Math.abs(sourceClearX - sourceX) <= SPLICE_PATH_EPS
+  ) {
+    leftParts.push(`L ${verticalX},${sourceY}`);
+  }
+  if (Math.abs(targetY - sourceY) > SPLICE_PATH_EPS) {
+    leftParts.push(`L ${verticalX},${targetY}`);
+  }
+
+  const rightParts = [`M ${verticalX},${targetY}`, `L ${targetX},${targetY}`];
+
+  return {
+    leftPath: leftParts.join(" "),
+    rightPath: rightParts.join(" "),
+    spliceX: verticalX,
+    spliceY: targetY,
+    bendCount: countOrthogonalBends(leftParts.join(" "), rightParts.join(" ")),
+    template,
+  };
 }
 
 type OrthogonalSegment =
@@ -1977,6 +2324,7 @@ type OrthogonalSegment =
 
 function sourceGapHorizSegments(
   sourceX: number,
+  sourceY: number,
   midX: number,
   jogX: number | undefined,
   sourceHorizY: number,
@@ -1987,36 +2335,64 @@ function sourceGapHorizSegments(
   const trunkX = jogX ?? midX;
   const usesBundleJog =
     jogX !== undefined && Math.abs(trunkX - midX) > SPLICE_PATH_EPS;
-  const sourceClearX = inwardClearXBeforeVertical(
-    sourceX,
-    midX,
-    diagramCenterX,
-    sideSpans,
-    sourceTagWidth,
-  );
+  const sourceOffsetY = Math.abs(sourceHorizY - sourceY) > SPLICE_PATH_EPS;
   const segments: Array<{ kind: "h"; y: number; x0: number; x1: number }> = [];
-  if (usesBundleJog) {
-    segments.push({
-      kind: "h" as const,
-      y: sourceHorizY,
-      x0: sourceClearX,
-      x1: trunkX,
-    });
-    if (Math.abs(trunkX - midX) > SPLICE_PATH_EPS) {
+
+  if (sourceOffsetY) {
+    const bendX = laneClearXBeforeVertical(
+      sourceX,
+      midX,
+      sourceY,
+      sourceHorizY,
+      diagramCenterX,
+      sideSpans,
+      sourceTagWidth,
+    );
+    if (usesBundleJog) {
+      if (Math.abs(trunkX - bendX) > SPLICE_PATH_EPS) {
+        segments.push({
+          kind: "h" as const,
+          y: sourceHorizY,
+          x0: bendX,
+          x1: trunkX,
+        });
+      }
+      if (Math.abs(midX - trunkX) > SPLICE_PATH_EPS) {
+        segments.push({
+          kind: "h" as const,
+          y: sourceHorizY,
+          x0: trunkX,
+          x1: midX,
+        });
+      }
+    } else if (Math.abs(midX - bendX) > SPLICE_PATH_EPS) {
       segments.push({
         kind: "h" as const,
         y: sourceHorizY,
+        x0: bendX,
+        x1: midX,
+      });
+    }
+    return segments;
+  }
+
+  if (Math.abs(midX - sourceX) > SPLICE_PATH_EPS) {
+    segments.push({
+      kind: "h" as const,
+      y: sourceY,
+      x0: sourceX,
+      x1: midX,
+    });
+  }
+  if (usesBundleJog) {
+    if (Math.abs(trunkX - midX) > SPLICE_PATH_EPS) {
+      segments.push({
+        kind: "h" as const,
+        y: sourceY,
         x0: trunkX,
         x1: midX,
       });
     }
-  } else if (Math.abs(midX - sourceClearX) > SPLICE_PATH_EPS) {
-    segments.push({
-      kind: "h" as const,
-      y: sourceHorizY,
-      x0: sourceClearX,
-      x1: midX,
-    });
   }
   return segments;
 }
@@ -2059,6 +2435,7 @@ function horizontalSegmentsForLane(
   return [
     ...sourceGapHorizSegments(
       candidate.sourceX,
+      candidate.sourceY,
       lane.midX,
       lane.jogX,
       sourceHorizY,
@@ -2267,6 +2644,7 @@ function assignSideHorizLaneYs(
   );
 
   for (const candidate of singles) {
+    if (candidate.fullButtSplice) continue;
     const lane = lanes.get(candidate.id)!;
     const sourceSign = sideHorizLaneSign(candidate.sourceY, diagramCenterY);
     const targetSign = sideHorizLaneSign(candidate.targetY, diagramCenterY);
@@ -2311,6 +2689,7 @@ function assignSideHorizLaneYs(
 
       const sourceSegs = sourceGapHorizSegments(
         candidate.sourceX,
+        candidate.sourceY,
         lane.midX,
         lane.jogX,
         sourceHorizY,
@@ -2359,18 +2738,16 @@ function hvDemarcatedSegments(
   targetY: number,
   midX: number,
   jogX?: number,
-  sideHoriz?: Pick<SpliceRoutingLane, "sourceHorizY" | "targetHorizY">,
+  _sideHoriz?: Pick<
+    SpliceRoutingLane,
+    "sourceHorizY" | "targetHorizY" | "sourceBendX" | "targetBendX"
+  >,
   sideSpans: SideCircuitLabelSpan = defaultSideCircuitLabelSpan(),
   diagramCenterX = (sourceX + targetX) / 2,
   sourceTagWidth = 0,
-  targetTagWidth = 0,
+  _targetTagWidth = 0,
 ): OrthogonalSegment[] {
   const spliceY = (sourceY + targetY) / 2;
-  const srcHY = sideHoriz?.sourceHorizY ?? sourceY;
-  const tgtHY = sideHoriz?.targetHorizY ?? targetY;
-  const trunkX = jogX ?? midX;
-  const usesBundleJog =
-    jogX !== undefined && Math.abs(trunkX - midX) > SPLICE_PATH_EPS;
   const sourceClearX = inwardClearXBeforeVertical(
     sourceX,
     midX,
@@ -2378,54 +2755,28 @@ function hvDemarcatedSegments(
     sideSpans,
     sourceTagWidth,
   );
-  const targetClearX = targetClearXBeforeVertical(
-    targetX,
-    midX,
-    diagramCenterX,
-    sideSpans,
-    targetTagWidth,
-  );
-  const sourceOffsetY = Math.abs(srcHY - sourceY) > SPLICE_PATH_EPS;
-  const targetOffsetY = Math.abs(tgtHY - targetY) > SPLICE_PATH_EPS;
-  const segments: OrthogonalSegment[] = [
-    { kind: "h", y: sourceY, x0: sourceX, x1: sourceClearX },
-  ];
+  const trunkX = jogX ?? midX;
+  const segments: OrthogonalSegment[] = [];
 
-  if (sourceOffsetY) {
-    segments.push({ kind: "v", x: sourceClearX, y0: sourceY, y1: srcHY });
-    if (usesBundleJog) {
-      segments.push(
-        { kind: "h", y: srcHY, x0: sourceClearX, x1: trunkX },
-        { kind: "h", y: srcHY, x0: trunkX, x1: midX },
-      );
-    } else if (Math.abs(midX - sourceClearX) > SPLICE_PATH_EPS) {
-      segments.push({ kind: "h", y: srcHY, x0: sourceClearX, x1: midX });
-    }
-  } else if (usesBundleJog) {
-    if (Math.abs(trunkX - sourceClearX) > SPLICE_PATH_EPS) {
-      segments.push({ kind: "h", y: sourceY, x0: sourceClearX, x1: trunkX });
-    }
-    if (Math.abs(midX - trunkX) > SPLICE_PATH_EPS) {
-      segments.push({ kind: "h", y: sourceY, x0: trunkX, x1: midX });
-    }
-  } else if (Math.abs(midX - sourceClearX) > SPLICE_PATH_EPS) {
-    segments.push({ kind: "h", y: sourceY, x0: sourceClearX, x1: midX });
+  let x0 = sourceX;
+  if (Math.abs(sourceClearX - x0) > SPLICE_PATH_EPS) {
+    segments.push({ kind: "h", y: sourceY, x0, x1: sourceClearX });
+    x0 = sourceClearX;
   }
-
-  segments.push(
-    { kind: "v", x: midX, y0: srcHY, y1: spliceY },
-    { kind: "v", x: midX, y0: spliceY, y1: tgtHY },
-  );
-
-  if (targetOffsetY) {
-    segments.push(
-      { kind: "h", y: tgtHY, x0: midX, x1: targetClearX },
-      { kind: "v", x: targetClearX, y0: tgtHY, y1: targetY },
-      { kind: "h", y: targetY, x0: targetClearX, x1: targetX },
-    );
-  } else {
-    segments.push({ kind: "h", y: tgtHY, x0: midX, x1: targetX });
+  if (
+    jogX !== undefined &&
+    Math.abs(trunkX - midX) > SPLICE_PATH_EPS &&
+    Math.abs(trunkX - x0) > SPLICE_PATH_EPS
+  ) {
+    segments.push({ kind: "h", y: sourceY, x0, x1: trunkX });
+    x0 = trunkX;
   }
+  if (Math.abs(midX - x0) > SPLICE_PATH_EPS) {
+    segments.push({ kind: "h", y: sourceY, x0, x1: midX });
+  }
+  segments.push({ kind: "v", x: midX, y0: sourceY, y1: spliceY });
+  segments.push({ kind: "v", x: midX, y0: spliceY, y1: targetY });
+  segments.push({ kind: "h", y: targetY, x0: midX, x1: targetX });
 
   return segments;
 }
@@ -2438,7 +2789,10 @@ export function spliceRouteSegments(
   targetY: number,
   midX: number,
   jogX?: number,
-  sideHoriz?: Pick<SpliceRoutingLane, "sourceHorizY" | "targetHorizY">,
+  sideHoriz?: Pick<
+    SpliceRoutingLane,
+    "sourceHorizY" | "targetHorizY" | "sourceBendX" | "targetBendX"
+  >,
   sideSpans: SideCircuitLabelSpan = defaultSideCircuitLabelSpan(),
   diagramCenterX = (sourceX + targetX) / 2,
   sourceTagWidth = 0,
@@ -2475,7 +2829,10 @@ export function splicePathsAvoidHandleColumnVertical(
   targetY: number,
   midX: number,
   jogX?: number,
-  sideHoriz?: Pick<SpliceRoutingLane, "sourceHorizY" | "targetHorizY">,
+  sideHoriz?: Pick<
+    SpliceRoutingLane,
+    "sourceHorizY" | "targetHorizY" | "sourceBendX" | "targetBendX"
+  >,
   sideSpans: SideCircuitLabelSpan = defaultSideCircuitLabelSpan(),
   diagramCenterX = (sourceX + targetX) / 2,
   sourceTagWidth = 0,
@@ -2529,6 +2886,53 @@ export function parallelSpliceSegmentsOverlap(
     return Math.min(yA.hi, yB.hi) - Math.max(yA.lo, yB.lo) > SPLICE_PATH_EPS;
   }
   return false;
+}
+
+/** Nested handle-row horizontals at the same splice row Y (EDGE-004 two-bend lead-in). */
+export function isSharedSpliceRowLeadInOverlap(
+  sourceYA: number,
+  sourceYB: number,
+  targetYA: number,
+  targetYB: number,
+  segA: OrthogonalSegment,
+  segB: OrthogonalSegment,
+): boolean {
+  if (segA.kind !== "h" || segB.kind !== "h") return false;
+  if (Math.abs(segA.y - segB.y) > SPLICE_PATH_EPS) return false;
+  if (Math.abs(sourceYA - sourceYB) <= SPLICE_PATH_EPS) return true;
+  if (Math.abs(targetYA - targetYB) <= SPLICE_PATH_EPS) return true;
+  // Same-Y inbound horizontals toward center may nest (EDGE-004 ≤2 bends)
+  return true;
+}
+
+/** Center vertical leg crossing another strand's handle-row lead-in (inherent to ≤2-bend routes). */
+export function isTwoBendRoutingCrossing(
+  a: OrthogonalSegment,
+  b: OrthogonalSegment,
+): boolean {
+  const vertical = a.kind === "v" ? a : b.kind === "v" ? b : undefined;
+  const horizontal = a.kind === "h" ? a : b.kind === "h" ? b : undefined;
+  if (!vertical || !horizontal) return false;
+  const vLo = Math.min(vertical.y0, vertical.y1);
+  const vHi = Math.max(vertical.y0, vertical.y1);
+  if (horizontal.y < vLo - SPLICE_PATH_EPS || horizontal.y > vHi + SPLICE_PATH_EPS) {
+    return false;
+  }
+  const hLo = Math.min(horizontal.x0, horizontal.x1);
+  const hHi = Math.max(horizontal.x0, horizontal.x1);
+  return (
+    vertical.x >= hLo - SPLICE_PATH_EPS && vertical.x <= hHi + SPLICE_PATH_EPS
+  );
+}
+
+export function isCenterVerticalCrossingHandleRowLeadIn(
+  vertical: OrthogonalSegment,
+  horizontal: OrthogonalSegment,
+  horizontalOwnerSourceY: number,
+): boolean {
+  if (vertical.kind !== "v" || horizontal.kind !== "h") return false;
+  if (Math.abs(horizontal.y - horizontalOwnerSourceY) > SPLICE_PATH_EPS) return false;
+  return isTwoBendRoutingCrossing(vertical, horizontal);
 }
 
 function orthogonalSegmentsCross(
@@ -2590,7 +2994,12 @@ export function hvDemarcatedPathsCross(
   );
   for (const a of segsA) {
     for (const b of segsB) {
-      if (orthogonalSegmentsCross(a, b)) return true;
+      if (orthogonalSegmentsCross(a, b)) {
+        if (isTwoBendRoutingCrossing(a, b)) {
+          continue;
+        }
+        return true;
+      }
     }
   }
   return false;
@@ -2723,6 +3132,7 @@ export function useRoutingLaneIndex(
   sourceTagWidth = 0,
   targetTagWidth = 0,
   diagramCenterX?: number,
+  fullButtSplice = false,
 ): {
   routingLane: number;
   activeLaneCount: number;
@@ -2731,6 +3141,8 @@ export function useRoutingLaneIndex(
   jogX?: number;
   sourceHorizY?: number;
   targetHorizY?: number;
+  sourceBendX?: number;
+  targetBendX?: number;
 } {
   const [, bump] = useReducer((n: number) => n + 1, 0);
   const dragCableNodeId = activeDragCableNodeId;
@@ -2786,23 +3198,34 @@ export function useRoutingLaneIndex(
   }
 
   if (!isDragAffected && storedLane) {
-    const midX = routingMidXForRender(
-      storedLane.midX,
-      sourceX,
-      targetX,
-      resolvedCenterX,
-      sideSpans,
-      sourceTagWidth,
-      targetTagWidth,
-    );
+    const midX = fullButtSplice
+      ? resolveButtSpliceMidX(
+          sourceX,
+          targetX,
+          resolvedCenterX,
+          sideSpans,
+          fallbackLane,
+          laneCountHint,
+        )
+      : routingMidXForRender(
+          storedLane.midX,
+          sourceX,
+          targetX,
+          resolvedCenterX,
+          sideSpans,
+          sourceTagWidth,
+          targetTagWidth,
+        );
     return {
       routingLane: fallbackLane,
       activeLaneCount: Math.max(1, laneCountHint),
       maxRowOffset,
       midX,
-      jogX: storedLane.jogX,
-      sourceHorizY: storedLane.sourceHorizY,
-      targetHorizY: storedLane.targetHorizY,
+      jogX: fullButtSplice ? undefined : storedLane.jogX,
+      sourceHorizY: fullButtSplice ? undefined : storedLane.sourceHorizY,
+      targetHorizY: fullButtSplice ? undefined : storedLane.targetHorizY,
+      sourceBendX: fullButtSplice ? undefined : storedLane.sourceBendX,
+      targetBendX: fullButtSplice ? undefined : storedLane.targetBendX,
     };
   }
 
@@ -2895,6 +3318,87 @@ export function useRoutingLaneIndex(
     jogX: routing?.jogX,
     sourceHorizY: routing?.sourceHorizY,
     targetHorizY: routing?.targetHorizY,
+    sourceBendX: routing?.sourceBendX,
+    targetBendX: routing?.targetBendX,
+  };
+}
+
+/** Parse `tube-${legId}|${tubeColor}-out/in` handle ids (striped tubes supported). */
+export function parseTubeHandleId(
+  handleId: string | null | undefined,
+): { legId: CableLegId; tubeColor: TubeColorCode } | null {
+  if (!handleId) return null;
+  const match = handleId.match(/^tube-(.+)-(out|in)$/);
+  if (!match) return null;
+  const body = match[1]!;
+  const pipe = body.lastIndexOf("|");
+  if (pipe <= 0) return null;
+  return {
+    legId: body.slice(0, pipe) as CableLegId,
+    tubeColor: body.slice(pipe + 1) as TubeColorCode,
+  };
+}
+
+function parseTubeEndpointKey(
+  key: string,
+): { legId: CableLegId; tubeColor: TubeColorCode } | null {
+  const pipe = key.lastIndexOf("|");
+  if (pipe <= 0) return null;
+  return {
+    legId: key.slice(0, pipe) as CableLegId,
+    tubeColor: key.slice(pipe + 1) as TubeColorCode,
+  };
+}
+
+/** Parse tube endpoints from `butt-tube-${keyA}::${keyB}` edge ids. */
+export function parseButtTubeEndpointsFromEdgeId(
+  edgeId: string,
+): {
+  endpointA: { legId: CableLegId; tubeColor: TubeColorCode };
+  endpointB: { legId: CableLegId; tubeColor: TubeColorCode };
+} | null {
+  const match = edgeId.match(/^butt-tube-(.+)::(.+)$/);
+  if (!match) return null;
+  const endpointA = parseTubeEndpointKey(match[1]!);
+  const endpointB = parseTubeEndpointKey(match[2]!);
+  if (!endpointA || !endpointB) return null;
+  return { endpointA, endpointB };
+}
+
+/** React Flow handle center for a collapsed full-butt-splice buffer tube. */
+export function tubeHandlePosition(
+  vc: VisualCable,
+  tubeColor: TubeColorCode,
+  nodePosition: { x: number; y: number },
+  scale = 1,
+  alignedStemX?: number,
+): { x: number; y: number } {
+  const geo = computeCableBreakout(
+    vc.tubes,
+    vc.side,
+    FIBER_ROW_PITCH,
+    CABLE_LAYOUT.headerH,
+    CABLE_LAYOUT.tubeLabelH,
+    scale,
+    alignedStemX,
+  );
+  const tube = geo.tubes.find((t) => t.tubeColor === tubeColor);
+  const outset = SPLICE_HANDLE_OVERHANG;
+  if (!tube) {
+    return {
+      x:
+        vc.side === "left"
+          ? nodePosition.x + geo.stemX + outset
+          : nodePosition.x + geo.viewWidth - geo.stemX - outset,
+      y: nodePosition.y + CABLE_LAYOUT.headerH,
+    };
+  }
+  return {
+    x:
+      vc.side === "left"
+        ? nodePosition.x + geo.stemX + outset
+        : nodePosition.x + geo.viewWidth - geo.stemX - outset,
+    y: nodePosition.y + tube.end.y,
   };
 }
 
@@ -2943,3 +3447,9 @@ export function resetSpliceRouteRegistryForTests(): void {
     registry.raf = 0;
   }
 }
+
+/** Preserved for future EDGE-011 Y-track lane work (unused under EDGE-004). */
+export const spliceLaneYTrackHelpers = {
+  assignSideHorizLaneYs,
+  assignGapBendLaneXs,
+};

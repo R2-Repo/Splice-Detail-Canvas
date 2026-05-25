@@ -46,6 +46,8 @@ export type VisualFiber = {
 export type VisualTube = {
   tubeColor: TubeColorCode;
   fibers: VisualFiber[];
+  /** Bounded Y shift for tube tip/handle only — fibers stay on row pitch. */
+  visualShiftY?: number;
 };
 
 export type VisualCable = {

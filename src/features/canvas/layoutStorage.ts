@@ -50,6 +50,7 @@ export function mergeLayoutOverrides(
     reportKey,
     layoutVersion: LAYOUT_OVERRIDE_VERSION,
     positions: patch.positions ?? existing?.positions ?? {},
+    autoLayoutY: patch.autoLayoutY ?? existing?.autoLayoutY,
     existingEdgeIds: patch.existingEdgeIds ?? existing?.existingEdgeIds,
     cableSides: { ...existing?.cableSides, ...patch.cableSides },
     collapseFullButtSplices:

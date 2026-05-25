@@ -1,6 +1,7 @@
 import { BaseEdge, type EdgeProps } from "@xyflow/react";
 
 import {
+  buildButtSplicePath,
   buildSplicePath,
   defaultSideCircuitLabelSpan,
   routingLaneFromData,
@@ -95,7 +96,8 @@ export function SpliceEdge({
   const sourceTagWidth = formattedCircuitTagWidth(d.circuitName);
   const targetTagWidth = sourceTagWidth;
 
-  const { midX, jogX, sourceHorizY, targetHorizY } = useRoutingLaneIndex(
+  const { midX, jogX, sourceHorizY, targetHorizY, sourceBendX, targetBendX } =
+    useRoutingLaneIndex(
     id,
     source,
     target,
@@ -113,21 +115,44 @@ export function SpliceEdge({
     sourceTagWidth,
     targetTagWidth,
     d.diagramCenterX,
+    d.fullButtSplice === true,
   );
 
-  const { leftPath, rightPath, spliceX, spliceY } = buildSplicePath(
+  const sideSpans = d.sideCircuitSpan ?? defaultSideCircuitLabelSpan();
+  const pathArgs = {
     sourceX,
     sourceY,
     targetX,
     targetY,
     midX,
-    jogX,
-    { sourceHorizY, targetHorizY },
-    d.sideCircuitSpan ?? defaultSideCircuitLabelSpan(),
-    d.diagramCenterX,
-    sourceTagWidth,
-    targetTagWidth,
-  );
+    sideSpans,
+    diagramCenterX: d.diagramCenterX,
+  };
+  const { leftPath, rightPath, spliceX, spliceY } = d.fullButtSplice
+    ? buildButtSplicePath(
+        pathArgs.sourceX,
+        pathArgs.sourceY,
+        pathArgs.targetX,
+        pathArgs.targetY,
+        pathArgs.midX,
+        pathArgs.sideSpans,
+        pathArgs.diagramCenterX,
+        fallbackLane,
+        laneCount,
+      )
+    : buildSplicePath(
+        sourceX,
+        sourceY,
+        targetX,
+        targetY,
+        midX,
+        jogX,
+        { sourceHorizY, targetHorizY, sourceBendX, targetBendX },
+        sideSpans,
+        d.diagramCenterX,
+        sourceTagWidth,
+        targetTagWidth,
+      );
 
   const fallback = d.color ?? "#e2e8f0";
   const sourceStroke = d.existing ? "#94a3b8" : (d.sourceColor ?? fallback);
