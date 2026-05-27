@@ -4,6 +4,7 @@ import { renderHook } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { FIBER_ROW_PITCH, MIN_HORIZONTAL_INSET_FLOOR, MIN_SPLICE_HORIZONTAL_INSET, SPLICE_ROUTING_END_MARGIN, fiberRowPrefixWidth, CABLE_LAYOUT } from "@/features/diagram/cableLayoutMetrics";
+import { formattedCircuitTagWidth } from "@/features/diagram/cableLabels";
 import { buildConnectionGraph } from "@/features/diagram/buildConnectionGraph";
 import { buildReactFlowGraph } from "@/features/diagram/buildReactFlowGraph";
 import { computeCableBreakout } from "@/features/diagram/cableBreakoutGeometry";
@@ -378,6 +379,38 @@ describe("spliceEdgeRouting", () => {
     );
     expect(rightPath).toBe(`M ${midX},250 L ${midX},${targetY} L ${targetX},${targetY}`);
     expect(rightPath).not.toContain(",376");
+  });
+
+  it("routingMidXForRender keeps distinct packed lanes inside the inset band", () => {
+    const sideSpans = { left: 180, right: 180 };
+    const sourceX = 250;
+    const targetX = 900;
+    const centerX = 550;
+    const tagWidth = formattedCircuitTagWidth("(CH 2305) YL");
+    const midA = 520;
+    const midB = 544;
+    expect(
+      routingMidXForRender(
+        midA,
+        sourceX,
+        targetX,
+        centerX,
+        sideSpans,
+        tagWidth,
+        tagWidth,
+      ),
+    ).toBe(midA);
+    expect(
+      routingMidXForRender(
+        midB,
+        sourceX,
+        targetX,
+        centerX,
+        sideSpans,
+        tagWidth,
+        tagWidth,
+      ),
+    ).toBe(midB);
   });
 
   it("distinct midX lanes use separate center verticals", () => {
@@ -1339,8 +1372,6 @@ describe("spliceEdgeRouting", () => {
     const a = lanes.get("zoneA")!;
     const b = lanes.get("zoneB")!;
     expect(Math.abs(a.midX - b.midX)).toBeGreaterThan(SPLICE_LANE_SEP - 0.01);
-    expect(a.sourceHorizY).toBeUndefined();
-    expect(b.sourceHorizY).toBeUndefined();
   });
 
   it("assignSpliceMidXLanes keeps zones independent", () => {

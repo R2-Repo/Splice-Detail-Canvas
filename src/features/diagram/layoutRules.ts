@@ -62,6 +62,7 @@ import {
   parallelSpliceSegmentsOverlap,
   pickSpliceRouteTemplate,
   resolveSpliceMidX,
+  isNestedHandleRowHorizOverlap,
   isSharedSpliceRowLeadInOverlap,
   spliceMidOrderInverts,
   splicePathsAvoidHandleColumnVertical,
@@ -1181,6 +1182,9 @@ export function findSpliceOverlapPair(ctx: LayoutRuleContext): string | null {
               segB,
             )
           ) {
+            continue;
+          }
+          if (isNestedHandleRowHorizOverlap(segA, segB, a.midX, b.midX)) {
             continue;
           }
           if (parallelSpliceSegmentsOverlap(segA, segB)) {

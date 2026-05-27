@@ -44,7 +44,7 @@ See [`RULE_PRIORITY.md`](./RULE_PRIORITY.md). EDGE-004 wins over EDGE-011.
 
 ## Known issues (ordered)
 
-1. EDGE-011 horizontal Y-track deconflict disabled under EDGE-004 — overlap checker passes; user visual QA may still find stacked horizontals
+1. SPI-215 / busy diagrams: lane assign runs; handle-row Y-offsets stored on edges but **not yet drawn** in `buildDemarcatedSplicePaths` (still ≤2-bend handle-row paths). Re-test SPI-215&I-80 after import.
 2. PNG visual parity incomplete
 3. PDF export blocked on dep approval
 

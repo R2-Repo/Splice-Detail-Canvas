@@ -4,19 +4,18 @@
 
 ## Last updated
 
-2026-05-25 — BL/OR bundle loop-back bend fix.
+2026-05-26 — SPI-215 render-time midX collapse fix.
 
 ## Done
 
-- **Loop-back spurs:** `reconcileBundleJogXForRender` drops `jogX` when clamped `midX` would backtrack; `sourceHorizWaypoints` enforces monotonic inward horizontals
-- **Global bundle trunk:** `jogX` assigned once per `tubeBundleKey` after vertical deconflict (not per routing zone)
-- **Render path:** `useRoutingLaneIndex` reconciles stored `jogX` with render-time `midX`
-- **Tests:** loop-back unit tests + 3161.4 BL 1–2 no-backtrack regression
-- Prior: post-drag bundle order, split-zone midX pack, import BL fix
+- **Root cause:** Import packed distinct `routingMidX` lanes, but `routingMidXForRender` re-ran `enforceMinHorizontalInset` with per-circuit tag widths and collapsed many strands onto one vertical X (looked unchanged in browser).
+- **Fix:** Preserve `midX` when already inside tag-aware inset band; pack lanes with `sourceTagWidth` / `targetTagWidth` from `buildSpliceHandleEntries`.
+- Prior: lane assign re-enabled (`assignGapBendLaneXs`, `assignSideHorizLaneYs`, vert deconflict).
+- **Regression:** `routingMidXForRender keeps distinct packed lanes` + SPI-215 EDGE-011 test.
 
 ## Next
 
-- User re-test 3161.4 BL/OR bends after cable drag (`?fixture=3161.4`)
+- Hard-refresh **http://localhost:5173/** and re-import SPI-215_I-80 — vertical legs should separate at 24px `midX` lanes.
 
 ## Commands verified
 

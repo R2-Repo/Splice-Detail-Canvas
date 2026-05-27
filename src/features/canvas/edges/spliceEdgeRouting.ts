@@ -217,6 +217,8 @@ export function assignSpliceRoutingLanesFromHandleEntries(
     rowOffset: entry.rowOffset ?? entry.fallbackLane,
     tubeBundleKey: entry.tubeBundleKey,
     fullButtSplice: entry.fullButtSplice,
+    sourceTagWidth: entry.sourceTagWidth,
+    targetTagWidth: entry.targetTagWidth,
   }));
 
   return assignSpliceRoutingLanes(candidates, sideSpans);
@@ -973,14 +975,18 @@ function sourceHorizWaypoints(
   diagramCenterX: number,
   sideSpans: SideCircuitLabelSpan,
   sourceTagWidth: number,
+  sourceBendX?: number,
 ): number[] {
-  const sourceClearX = inwardClearXBeforeVertical(
-    sourceX,
-    midX,
-    diagramCenterX,
-    sideSpans,
-    sourceTagWidth,
-  );
+  const sourceClearX =
+    sourceBendX !== undefined && Number.isFinite(sourceBendX)
+      ? sourceBendX
+      : inwardClearXBeforeVertical(
+          sourceX,
+          midX,
+          diagramCenterX,
+          sideSpans,
+          sourceTagWidth,
+        );
   const inward =
     inwardSignForColumn(sourceX, diagramCenterX) > 0 ? 1 : -1;
   const trunkX = reconcileBundleJogXForRender(
@@ -1064,6 +1070,7 @@ export function buildDemarcatedSplicePaths(
     diagramCenterX,
     sideSpans,
     sourceTagWidth,
+    _sideHoriz?.sourceBendX,
   );
 
   const leftParts = [`M ${sourceX},${sourceY}`];
@@ -1147,7 +1154,29 @@ export type MidXLaneCandidate = {
   tubeBundleKey?: string;
   /** Collapsed full-butt-splice tube — no Y-track deconflict (≤2 bends). */
   fullButtSplice?: boolean;
+  sourceTagWidth?: number;
+  targetTagWidth?: number;
 };
+
+function clampMidXForCandidate(
+  midX: number,
+  candidate: MidXLaneCandidate,
+  diagramCenterX: number,
+  sideSpans: SideCircuitLabelSpan,
+): number {
+  return clampMidXForMinHorizontalInset(
+    midX,
+    candidate.sourceX,
+    candidate.targetX,
+    diagramCenterX,
+    sideSpans,
+    MIN_SPLICE_HORIZONTAL_INSET,
+    candidate.sourceTagWidth ?? 0,
+    candidate.targetTagWidth ?? 0,
+    true,
+    true,
+  );
+}
 
 /** Ring-cut visual instances (`~1`, `~2`) share one route bundle. */
 export function normalizeVisualCableIdForRouting(visualCableId: string): string {
@@ -1948,6 +1977,24 @@ function verticalSpanOverlaps(
  * same X with overlapping Y spans on busy multi-cable diagrams. A single
  * occupied ledger across all candidates prevents cross-zone vertical stack-up.
  */
+function vertLanePackBounds(
+  sourceX: number,
+  targetX: number,
+  diagramCenterX: number,
+  sideSpans: SideCircuitLabelSpan,
+): { lo: number; hi: number } {
+  const routing = spliceRoutingBounds(sourceX, targetX);
+  if (routing.span > SPLICE_PATH_EPS) {
+    return { lo: routing.lo, hi: routing.hi };
+  }
+  return spliceMidXInsetBounds(
+    sourceX,
+    targetX,
+    diagramCenterX,
+    sideSpans,
+  );
+}
+
 function assignVertLanesForTubeBundle(
   members: MidXLaneCandidate[],
   lanes: Map<string, SpliceRoutingLane>,
@@ -1959,7 +2006,7 @@ function assignVertLanesForTubeBundle(
   const columnX = (sorted[0]!.sourceX + sorted[0]!.targetX) / 2;
   const inward =
     inwardSignForColumn(columnX, diagramCenterX) > 0 ? 1 : -1;
-  const insetBounds = spliceMidXInsetBounds(
+  const { lo: packLo, hi: packHi } = vertLanePackBounds(
     sorted[0]!.sourceX,
     sorted[0]!.targetX,
     diagramCenterX,
@@ -1981,8 +2028,8 @@ function assignVertLanesForTubeBundle(
       const lane = lanes.get(candidate.id)!;
       const xCandidate = lane.midX + inward * bundleLaneIndex * SPLICE_LANE_SEP;
       if (
-        (inward > 0 && xCandidate > insetBounds.hi + SPLICE_PATH_EPS) ||
-        (inward < 0 && xCandidate < insetBounds.lo - SPLICE_PATH_EPS)
+        xCandidate < packLo - SPLICE_PATH_EPS ||
+        xCandidate > packHi + SPLICE_PATH_EPS
       ) {
         allClear = false;
         break;
@@ -2030,16 +2077,24 @@ function assignVertLanesForTubeBundle(
     }
 
     if (bundleLaneIndex > 64) {
-      for (const candidate of sorted) {
+      for (let i = 0; i < sorted.length; i++) {
+        const candidate = sorted[i]!;
         const lane = lanes.get(candidate.id)!;
+        const forcedX = inward > 0
+          ? packLo + i * SPLICE_LANE_SEP
+          : packHi - i * SPLICE_LANE_SEP;
+        const clamped = Math.max(packLo, Math.min(packHi, forcedX));
         const srcHY = lane.sourceHorizY ?? candidate.sourceY;
         const tgtHY = lane.targetHorizY ?? candidate.targetY;
         const spliceY = (candidate.sourceY + candidate.targetY) / 2;
         occupied.push({
-          x: lane.midX,
+          x: clamped,
           y0: Math.min(srcHY, spliceY, tgtHY),
           y1: Math.max(srcHY, spliceY, tgtHY),
         });
+        if (Math.abs(clamped - lane.midX) > SPLICE_PATH_EPS) {
+          lanes.set(candidate.id, { ...lane, midX: clamped });
+        }
       }
       return;
     }
@@ -2228,10 +2283,7 @@ function assignSideVertLaneXs(
         ? 1
         : -1;
 
-    // Strand's own inset-feasible band — V deconflict must NEVER push midX
-    // outside this band. Pushing past targetX creates a reverse-H loop-back
-    // (the regression seen on the aqua strand).
-    const insetBounds = spliceMidXInsetBounds(
+    const { lo: packLo, hi: packHi } = vertLanePackBounds(
       candidate.sourceX,
       candidate.targetX,
       diagramCenterX,
@@ -2242,10 +2294,9 @@ function assignSideVertLaneXs(
     let placedX: number | null = null;
     for (;;) {
       const xCandidate = lane.midX + inward * laneIndex * SPLICE_LANE_SEP;
-      // Stop pushing inward once we'd exit the strand's own feasible band.
       if (
-        (inward > 0 && xCandidate > insetBounds.hi + SPLICE_PATH_EPS) ||
-        (inward < 0 && xCandidate < insetBounds.lo - SPLICE_PATH_EPS)
+        xCandidate < packLo - SPLICE_PATH_EPS ||
+        xCandidate > packHi + SPLICE_PATH_EPS
       ) {
         break;
       }
@@ -2261,10 +2312,30 @@ function assignSideVertLaneXs(
       laneIndex += 1;
     }
 
-    // Fallback: keep the original midX (some shared track is unavoidable on
-    // very busy diagrams) rather than push past target X. Visual collision
-    // beats a hard loop-back regression.
-    const finalX = placedX ?? lane.midX;
+    let finalX = placedX;
+    if (finalX === null) {
+      for (let forced = laneIndex; forced <= 64; forced++) {
+        const xCandidate = inward > 0
+          ? packLo + forced * SPLICE_LANE_SEP
+          : packHi - forced * SPLICE_LANE_SEP;
+        if (
+          xCandidate < packLo - SPLICE_PATH_EPS ||
+          xCandidate > packHi + SPLICE_PATH_EPS
+        ) {
+          break;
+        }
+        const conflict = occupied.some(
+          (existing) =>
+            Math.abs(existing.x - xCandidate) <= SPLICE_PATH_EPS &&
+            verticalSpanOverlaps(y0, y1, existing.y0, existing.y1),
+        );
+        if (!conflict) {
+          finalX = xCandidate;
+          break;
+        }
+      }
+    }
+    finalX ??= lane.midX;
     occupied.push({ x: finalX, y0, y1 });
     if (Math.abs(finalX - lane.midX) > SPLICE_PATH_EPS) {
       lanes.set(candidate.id, { ...lane, midX: finalX });
@@ -2316,6 +2387,14 @@ export function assignSpliceRoutingLanes(
 ): Map<string, SpliceRoutingLane> {
   const diagramCenterX = globalDiagramCenterX(candidates);
   const midXMap = assignSpliceMidXLanes(candidates, sideSpans);
+  for (const candidate of candidates) {
+    const raw = midXMap.get(candidate.id);
+    if (raw === undefined) continue;
+    midXMap.set(
+      candidate.id,
+      clampMidXForCandidate(raw, candidate, diagramCenterX, sideSpans),
+    );
+  }
   const result = new Map<string, SpliceRoutingLane>();
   const candidateById = new Map(candidates.map((c) => [c.id, c]));
 
@@ -2395,6 +2474,20 @@ export function assignSpliceRoutingLanes(
       });
     }
   }
+
+  const horizOffsets = assignSideHorizLaneYs(
+    candidates,
+    result,
+    sideSpans,
+    diagramCenterX,
+  );
+  for (const [id, offsets] of horizOffsets) {
+    const lane = result.get(id);
+    if (!lane) continue;
+    result.set(id, { ...lane, ...offsets });
+  }
+
+  assignGapBendLaneXs(candidates, result, sideSpans, diagramCenterX);
 
   return result;
 }
@@ -2862,6 +2955,12 @@ function assignSideHorizLaneYs(
     const minB = Math.min(...b.map((m) => m.rowOffset));
     return minA - minB;
   })) {
+    if (sameSideLoopBundleSkipsJogX(bundle)) {
+      for (const member of bundle) {
+        processed.add(member.id);
+      }
+      continue;
+    }
     assignHorizLanesForTubeBundle(
       bundle,
       lanes,
@@ -2992,6 +3091,7 @@ function hvDemarcatedSegments(
     diagramCenterX,
     sideSpans,
     sourceTagWidth,
+    _sideHoriz?.sourceBendX,
   );
   const segments: OrthogonalSegment[] = [];
 
@@ -3129,8 +3229,19 @@ export function isSharedSpliceRowLeadInOverlap(
   if (Math.abs(segA.y - segB.y) > SPLICE_PATH_EPS) return false;
   if (Math.abs(sourceYA - sourceYB) <= SPLICE_PATH_EPS) return true;
   if (Math.abs(targetYA - targetYB) <= SPLICE_PATH_EPS) return true;
-  // Same-Y inbound horizontals toward center may nest (EDGE-004 ≤2 bends)
-  return true;
+  return false;
+}
+
+/** Same-Y handle horizontals when center lanes are already ≥24px apart (nested lead-ins). */
+export function isNestedHandleRowHorizOverlap(
+  segA: OrthogonalSegment,
+  segB: OrthogonalSegment,
+  midXA: number,
+  midXB: number,
+): boolean {
+  if (segA.kind !== "h" || segB.kind !== "h") return false;
+  if (Math.abs(segA.y - segB.y) > SPLICE_PATH_EPS) return false;
+  return Math.abs(midXA - midXB) >= SPLICE_LANE_SEP - 0.01;
 }
 
 /** Center vertical leg crossing another strand's handle-row lead-in (inherent to ≤2-bend routes). */
@@ -3356,6 +3467,24 @@ export function routingMidXForRender(
   sourceTagWidth = 0,
   targetTagWidth = 0,
 ): number {
+  const { lo, hi } = spliceMidXInsetBounds(
+    sourceX,
+    targetX,
+    diagramCenterX,
+    sideSpans,
+    MIN_SPLICE_HORIZONTAL_INSET,
+    sourceTagWidth,
+    targetTagWidth,
+    true,
+    true,
+  );
+  if (
+    lo <= hi + SPLICE_PATH_EPS &&
+    midX >= lo - SPLICE_PATH_EPS &&
+    midX <= hi + SPLICE_PATH_EPS
+  ) {
+    return midX;
+  }
   return enforceMinHorizontalInset(
     midX,
     sourceX,
@@ -3806,7 +3935,7 @@ export function resetSpliceRouteRegistryForTests(): void {
   }
 }
 
-/** @internal EDGE-011 helpers — unused under EDGE-004; kept to satisfy noUnusedLocals. */
+/** @internal EDGE-011 — exported for unit tests. */
 export const spliceLaneYTrackHelpers = {
   assignSideHorizLaneYs,
   assignGapBendLaneXs,

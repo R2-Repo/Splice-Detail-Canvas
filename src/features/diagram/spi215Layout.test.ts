@@ -7,6 +7,7 @@ import { FIBER_ROW_PITCH } from "@/features/diagram/cableLayoutMetrics";
 import {
   buildLayoutRuleContext,
   checkLayoutRule,
+  findSpliceOverlapPair,
 } from "@/features/diagram/layoutRules";
 import { scoreCableSideAssignment } from "@/features/diagram/layoutScoring";
 import { cableNameKey } from "@/features/import/cableLegIdentity";
@@ -74,6 +75,15 @@ describe("SPI-215_I-80 layout", () => {
       const result = checkLayoutRule(id, ctx);
       expect(result.ok, result.detail).toBe(true);
     }
+  });
+
+  it("passes splice routing spacing rules EDGE-004, EDGE-011, no stacked segments", () => {
+    const ctx = buildLayoutRuleContext(graphFromSpi215());
+    for (const id of ["EDGE-004", "EDGE-011"] as const) {
+      const result = checkLayoutRule(id, ctx);
+      expect(result.ok, `${id}: ${result.detail}`).toBe(true);
+    }
+    expect(findSpliceOverlapPair(ctx)).toBeNull();
   });
 
   it("every buffer tube has 24px pitch between consecutive fibers", () => {
