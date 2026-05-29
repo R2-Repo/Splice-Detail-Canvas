@@ -3499,6 +3499,59 @@ export function routingMidXForRender(
   );
 }
 
+/**
+ * EDGE-008/012: keep sibling vertical legs separated at render time.
+ *
+ * Lane assignment runs against the analytic handle model, but render uses the
+ * settled handle X (which can differ by tens–hundreds of px, worse after a
+ * cable flips sides). When the stored midX lands outside the render clearance
+ * band, routingMidXForRender clamps every out-of-band sibling onto the same
+ * boundary and the legs stack. Re-anchor at that boundary and step each
+ * sibling away from the violated edge by its stable rowOffset rank, kept
+ * inside the band, so siblings stay ≥ SPLICE_LANE_SEP apart with no cross-edge
+ * / registry state (deterministic, no render-order thrash).
+ */
+function separatedMidXForRender(
+  storedMidX: number,
+  sourceX: number,
+  targetX: number,
+  diagramCenterX: number,
+  sideSpans: SideCircuitLabelSpan,
+  sourceTagWidth: number,
+  targetTagWidth: number,
+  rowOffset: number | undefined,
+): number {
+  const clamped = routingMidXForRender(
+    storedMidX,
+    sourceX,
+    targetX,
+    diagramCenterX,
+    sideSpans,
+    sourceTagWidth,
+    targetTagWidth,
+  );
+  // In-band already → nothing to fix.
+  if (Math.abs(clamped - storedMidX) <= SPLICE_PATH_EPS) return clamped;
+  const rank = Math.max(0, Math.round((rowOffset ?? 0) / FIBER_ROW_PITCH));
+  if (rank === 0) return clamped;
+  // Step away from whichever boundary the clamp hit (stored beyond hi → step
+  // down; stored below lo → step up), then keep the result inside the band.
+  const dir = storedMidX > clamped ? -1 : 1;
+  const staggered = clamped + dir * rank * SPLICE_LANE_SEP;
+  const { lo, hi } = spliceMidXInsetBounds(
+    sourceX,
+    targetX,
+    diagramCenterX,
+    sideSpans,
+    MIN_SPLICE_HORIZONTAL_INSET,
+    sourceTagWidth,
+    targetTagWidth,
+    true,
+    true,
+  );
+  return Math.max(lo, Math.min(hi, staggered));
+}
+
 function renderLaneGeometry(
   lane: SpliceRoutingLane | undefined,
   midX: number,
@@ -3631,7 +3684,7 @@ export function useRoutingLaneIndex(
           fallbackLane,
           laneCountHint,
         )
-      : routingMidXForRender(
+      : separatedMidXForRender(
           storedLane.midX,
           sourceX,
           targetX,
@@ -3639,6 +3692,7 @@ export function useRoutingLaneIndex(
           sideSpans,
           sourceTagWidth,
           targetTagWidth,
+          rowOffset,
         );
     return {
       routingLane: fallbackLane,
